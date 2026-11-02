@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yaro"
+version = "0.6.2"
+description = "YARO - You Only Run Once: a privacy-first machine-vision algorithm-development harness (forked from OpenVLHarness)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "YARO contributors" }]
+keywords = ["machine-vision", "agent-harness", "calibration", "evaluation", "privacy"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Manufacturing",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = []
+
+[project.optional-dependencies]
+api = ["openai>=1.40"]
+cv = ["numpy>=1.26", "opencv-python-headless>=4.9"]
+# 真训练/真导出/真测速才需要。体积很大（torch 带 CUDA 时 2GB+），所以不放进 full。
+# 想用 GPU 训练请按 PyTorch 官网命令装对应 CUDA 版本。
+ml = ["torch>=2.2", "torchvision>=0.17", "onnx>=1.16", "onnxruntime>=1.18"]
+# 钥匙串：装了它，`yaro key set` 会把密钥交给操作系统保管
+keyring = ["keyring>=24"]
+# 独立窗口：`yaro app` 用系统 WebView 打开 GUI，不受浏览器扩展/强制深色影响。
+# 多人协作、给同事分发时建议装它；没装也能用 `yaro gui` 走浏览器。
+desktop = ["pywebview>=5.0"]
+dev = ["pytest>=8"]
+# 一次装齐"能跑起来"的推荐组合
+full = ["openai>=1.40", "numpy>=1.26", "opencv-python-headless>=4.9", "pywebview>=5.0"]
+
+[project.scripts]
+yaro = "yaro.cli:main"
+
+[project.urls]
+Documentation = "https://github.com/cz-041017/YARO#readme"
+Source = "https://github.com/cz-041017/YARO"
+
+[tool.setuptools.packages.find]
+include = ["yaro*"]
+
+# GUI 是纯静态资源、CONTRACT.md 是运行时契约，两者都必须随包安装，
+# 否则 `pip install` 到 site-packages 后 `yaro gui` 找不到 web/、system prompt 变空。
+[tool.setuptools.package-data]
+yaro = ["web/*", "data/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

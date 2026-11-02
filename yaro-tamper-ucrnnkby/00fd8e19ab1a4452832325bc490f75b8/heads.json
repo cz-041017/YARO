@@ -1,0 +1,11 @@
+{
+  "session_id": "00fd8e19ab1a4452832325bc490f75b8",
+  "heads": {
+    "main": "544dfb4e39ae481385fc7cd9c3dcd931",
+    "alt": "085f317b99ee4ac3bf7f80c0810aefd0"
+  },
+  "bases": {
+    "alt": "a85ed306f66e40ab8c482b23f47843ae"
+  },
+  "seq": 7
+}

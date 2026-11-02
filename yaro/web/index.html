@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>YARO · 视觉开发助手</title>
+<link rel="icon" href="/assets/logo.svg?v=0.6.2" type="image/svg+xml" />
+<link rel="stylesheet" href="/assets/app.css?v=0.6.2" />
+<style>
+/* 主题变量兜底：即使外部 app.css 被浏览器缓存成旧版本（渲染出深色底），
+ * 这里的内联定义也一定是最新的——它和 app.css 里的变量名完全一致，
+ * 所以旧 CSS 里的 `background: var(--bg)` 会拿到这里的值。
+ * 改颜色时**两处必须同步**（verify.py 会检查两边的 --bg 一致）。 */
+:root, :root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f2f4f7;
+  --bg-rail: #ffffff;
+  --bg-panel: #ffffff;
+  --bg-raised: #e8ecf1;
+  --bg-hover: #dde3ea;
+  --line: #aab3bf;
+  --line-soft: #ccd3dc;
+  --fg: #0d1014;
+  --fg-dim: #2c333c;
+  --fg-mute: #4a545f;
+  --ok: #0b6b3a;
+  --warn: #7a4f00;
+  --err: #a81e17;
+  --accent: #0d1014;
+  --line-ok: #8dc4a4;
+  --line-err: #dda29d;
+  --scroll: #bcc5d0;
+  --scroll-hover: #9da9b6;
+  --thumb-bg: #dfe4ea;
+  --primary-hover: #262d36;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1b1e23;
+  --bg-rail: #16181d;
+  --bg-panel: #22262c;
+  --bg-raised: #2b3038;
+  --bg-hover: #343a44;
+  --line: #4a525d;
+  --line-soft: #363d47;
+  --fg: #f7f8fa;
+  --fg-dim: #cfd5dd;
+  --fg-mute: #a3abb6;
+  --ok: #74dfa1;
+  --warn: #f0c36a;
+  --err: #ff928a;
+  --accent: #f7f8fa;
+  --line-ok: #2f6b4c;
+  --line-err: #7a3a36;
+  --scroll: #4a525d;
+  --scroll-hover: #5c6673;
+  --thumb-bg: #000000;
+  --primary-hover: #ffffff;
+}
+html, body { background: var(--bg); color: var(--fg); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ---------------------------------------------------------- 左栏 -->
+  <aside class="rail">
+    <div class="brand">
+      <span class="brand-mark">Y</span>
+      <span class="brand-name">YARO</span>
+      <span class="brand-version" id="brand-version">v0.1.0</span>
+    </div>
+
+    <div class="rail-actions">
+      <button class="btn wide primary" id="btn-new">+ 新会话</button>
+    </div>
+
+    <div class="rail-section">
+      <div class="section-label">会话</div>
+      <div class="session-list" id="session-list"></div>
+    </div>
+
+    <div class="rail-foot">
+      <div class="foot-row"><span class="k">model</span><span class="v" id="foot-model">—</span></div>
+      <div class="foot-row"><span class="k">api key</span><span class="v" id="foot-key">—</span></div>
+      <div class="foot-row"><span class="k">docker</span><span class="v" id="foot-docker">—</span></div>
+      <div class="foot-row"><span class="k">egress</span><span class="v" id="foot-egress">—</span></div>
+      <div class="foot-row"><span class="k">artifacts</span><span class="v" id="foot-artifacts">0</span></div>
+      <div class="foot-row"><span class="k">workspace</span><span class="v" id="foot-workspace">—</span></div>
+      <div class="foot-row"><span class="k">build</span><span class="v" id="foot-build">—</span></div>
+    </div>
+  </aside>
+
+  <!-- ---------------------------------------------------------- 中栏 -->
+  <main class="main">
+    <div class="main-head">
+      <span class="dot" id="head-dot"></span>
+      <span class="head-title" id="head-title">未选择会话</span>
+      <span class="badge ok" id="head-verify" hidden>verified</span>
+      <span class="badge" id="head-demo" hidden>demo</span>
+      <span class="spacer"></span>
+      <div class="meters">
+        <div class="meter"><span class="label">cost</span><span class="value" id="stat-cost">$0.0000</span></div>
+        <div class="meter"><span class="label">cache</span><span class="value" id="stat-cache">—</span></div>
+        <div class="meter"><span class="label">turns</span><span class="value" id="stat-turns">0</span></div>
+      </div>
+      <button class="btn small" id="btn-theme" title="切换浅色 / 深色主题">主题</button>
+      <button class="btn small" id="btn-verify" disabled>校验事件链</button>
+    </div>
+
+    <div class="transcript" id="transcript">
+      <section class="welcome" id="welcome">
+        <h1>YARO — You Only Run Once</h1>
+        <p>面向机器视觉全链路的开发 harness：数据集体检、标注抽查、切分、训练计划、调优、部署验收，全部可回滚可追溯。</p>
+        <ul>
+          <li>在下方输入任务，或勾选 <code>演示模式</code> 看一条不花 token 的全链路运行（<code>demo/dataset</code>）。</li>
+          <li>每次工具调用的证据（图像 / 表格 / 指标）都会落在产物库里，<code>artifact://</code> 地址可追溯。</li>
+          <li>右栏 <code>时间线</code> 支持 rewind / fork，回滚只移动指针，不删除历史。</li>
+          <li>模型自报的分数一律不被采信：指标由 harness 的评估函数计算。</li>
+          <li><b>默认不出网</b>（<code>egress=off</code>）：原始图与密钥不出本机；真实模型调用需显式授权。</li>
+        </ul>
+        <p class="hint">Ctrl+Enter 运行 · Alt+N 新会话 · Esc 停止</p>
+      </section>
+    </div>
+
+    <div class="composer">
+      <div class="composer-box">
+        <textarea id="task" placeholder="描述任务，例如：把 demo/dataset 走一遍全链路——体检数据、抽查标注、切分、给训练计划并诊断训练日志。" spellcheck="false"></textarea>
+        <div class="composer-row">
+          <label class="opt"><input type="checkbox" id="opt-demo" />演示模式</label>
+          <label class="opt">effort
+            <select id="opt-effort">
+              <option value="">默认</option>
+              <option value="low">low</option>
+              <option value="high">high</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+          <span class="composer-hint" id="composer-hint">Ctrl+Enter 运行 · Esc 停止</span>
+          <button class="btn" id="btn-stop" disabled>停止</button>
+          <button class="btn primary" id="btn-run">运行</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ---------------------------------------------------------- 右栏 -->
+  <aside class="inspector">
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="timeline">时间线</button>
+      <button class="tab" data-tab="artifacts">产物</button>
+      <button class="tab" data-tab="gates">闸门</button>
+      <button class="tab" data-tab="doctor">自检</button>
+    </div>
+
+    <div class="pane" id="tab-timeline">
+      <div class="pane-head"><span>事件链</span><span class="count" id="timeline-count">0</span></div>
+      <div class="timeline" id="timeline"></div>
+    </div>
+
+    <div class="pane" id="tab-artifacts" hidden>
+      <div class="pane-head"><span>产物库</span><span class="count" id="artifact-count">0</span></div>
+      <div class="artifact-grid" id="artifact-grid"></div>
+    </div>
+
+    <div class="pane" id="tab-gates" hidden>
+      <div class="pane-head"><span>静态闸门</span><span class="count">G1</span></div>
+      <div class="gate-form">
+        <input id="gate-path" value="." placeholder="相对工作区的路径" />
+        <button class="btn small" id="btn-gate">扫描</button>
+      </div>
+      <div id="gate-result"></div>
+    </div>
+
+    <div class="pane" id="tab-doctor" hidden>
+      <div class="pane-head"><span>环境自检</span><span class="count">doctor</span></div>
+      <button class="btn small wide" id="btn-doctor">重新检查</button>
+      <div id="doctor" style="margin-top:10px"></div>
+    </div>
+  </aside>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<div class="lightbox" id="lightbox" hidden><img id="lightbox-img" alt="" /></div>
+
+<div class="dialog" id="key-dialog" hidden>
+  <div class="dialog-box" role="dialog" aria-modal="true" aria-labelledby="key-title">
+    <div class="dialog-head">
+      <span id="key-title">API Key</span>
+      <button class="btn small" id="btn-key-close" title="关闭（Esc）">关闭</button>
+    </div>
+    <div class="dialog-body">
+      <p class="dialog-note">
+        Key 只发到本机（127.0.0.1），存进系统钥匙串或
+        <code>~/.yaro/secrets.json</code>（0600）；<b>不会写进页面、事件日志或 traceback</b>，
+        页面上也只显示掩码。
+      </p>
+      <div class="kv-line"><span class="k">当前状态</span><span class="v" id="key-status">—</span></div>
+      <div class="kv-line"><span class="k">模型 / 出网</span><span class="v" id="key-egress">—</span></div>
+      <label class="field">
+        <span class="field-label">新的 API Key</span>
+        <input type="password" id="key-input" autocomplete="off" spellcheck="false" placeholder="sk-..." />
+      </label>
+      <label class="field">
+        <span class="field-label">再输一次（防手滑）</span>
+        <input type="password" id="key-input2" autocomplete="off" spellcheck="false" placeholder="再粘贴一次" />
+      </label>
+      <p class="dialog-warn" id="key-warn"></p>
+      <div class="dialog-actions">
+        <button class="btn" id="btn-key-clear">清除已保存的 Key</button>
+        <button class="btn primary" id="btn-key-save">保存到本机</button>
+      </div>
+      <p class="dialog-foot">
+        云端模型还需要 <code>YARO_EGRESS=text</code> + <code>YARO_EGRESS_ALLOW_PUBLIC=1</code>；
+        用内网模型（<code>DEEPSEEK_BASE_URL=http://127.0.0.1:8000/v1</code>）则不触发公网闸。
+      </p>
+    </div>
+  </div>
+</div>
+
+<script src="/assets/app.js?v=0.6.2"></script>
+</body>
+</html>
