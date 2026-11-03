@@ -239,6 +239,37 @@ def test_demo_run_produces_events_artifacts_and_stats(server):
     assert raw.startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_ensure_loop_is_persistent(server):
+    """回归：agent 运行必须调度在单一常驻 loop 上（修 Event loop is closed）。
+
+    旧的 ``asyncio.run`` 每次新建/关闭 loop，Windows proactor 下会与 httpx/httpcore
+    连接池 abort 竞争，随机抛 RuntimeError: Event loop is closed。
+    """
+    harness = server["harness"]
+    loop1 = harness._ensure_loop()
+    loop2 = harness._ensure_loop()
+    assert loop1 is loop2
+    assert not loop1.is_closed()
+    assert loop1.is_running()
+
+
+def test_concurrent_demo_runs_all_complete(server):
+    """回归：并发多次运行不因 loop 生命周期问题互相踩踏、不丢 run_end。"""
+    base = server["base"]
+    sids = []
+    for _ in range(4):
+        status, data = call(base, "/api/sessions", method="POST", body={})
+        assert status == 200
+        sids.append(data["session_id"])
+    for sid in sids:
+        status, _ = call(base, f"/api/sessions/{sid}/run", method="POST", body={"task": "hi", "demo": True})
+        assert status == 200
+    for sid in sids:
+        state = wait_idle(base, sid)
+        re = [e for e in state["events"] if e["type"] == "run_end"][-1]
+        assert re["payload"]["stop_reason"] == "done"
+
+
 def test_since_filter_returns_only_newer_events(server):
     base = server["base"]
     call(base, "/api/config")

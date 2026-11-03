@@ -60,7 +60,12 @@
 - **HTTP 层 OPTIONS 预检**：`server.py` 加 `do_OPTIONS`（基类对未覆盖方法返 501 ``Unsupported method``，
   GUI 从另一个本机来源访问时浏览器会发 CORS 预检）——回 204 + 回显本机 Origin + 只授 GET/POST/OPTIONS，
   `_guard` 仍挡非本机 Host/Origin（跨源不放开）。
-- 每个模块均 spawn 子智能体对抗性审查并修完致命/高危项；全量 `pytest -q` 323 passed、
+- **单一常驻事件循环**：`server.py` 的 `_run_thread` 从每次 `asyncio.run`（新建/关 loop）改为
+  `_ensure_loop()` 常驻 loop + `run_coroutine_threadsafe`——修 Windows proactor 下 loop 关闭与
+  httpx/httpcore/anyio 连接池 `abort` 竞争导致的随机 `RuntimeError: Event loop is closed`
+  （任务越短越易踩，实测并发 8 次真实调用 3 次报错，修后 0 次）。回归测试
+  `test_ensure_loop_is_persistent` + `test_concurrent_demo_runs_all_complete`。
+- 每个模块均 spawn 子智能体对抗性审查并修完致命/高危项；全量 `pytest -q` 325 passed、
   `verify.py` 19/19（截至本条目）。
 - 尚未接线：max_cost/max_wall 预算；打包 app 已出 `dist/YARO-win64.zip`（v0.7.0，含
   langgraph/langchain 隐藏导入 + doctor 冻结安装检查不再误报 egg-info 旧版本），换机验收属文档化后续项。

@@ -117,6 +117,9 @@ class Harness:
         self.allow_public_gui = os.environ.get("YARO_GUI_PUBLIC") == "1"
         self._runs: dict[str, RunState] = {}
         self._lock = threading.Lock()
+        # 单一常驻事件循环：所有 agent 运行都在它上面调度（见 _ensure_loop 的说明）。
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ #
     # API Key（GUI 里的入口，只允许本机写）
@@ -381,9 +384,33 @@ class Harness:
         state.thread.start()
         return {"session_id": session_id, "demo": demo, "running": True}
 
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        """返回常驻事件循环，首次调用时在独立线程里启动。
+
+        不能用 ``asyncio.run`` 每次新建/关闭 loop：DeepSeek 走 httpx/httpcore/anyio
+        异步栈，Windows proactor 下 loop 关闭时会和连接池 ``abort`` 竞争，随机抛
+        ``RuntimeError: Event loop is closed``（偶发，任务越短越容易踩）。用单一常驻
+        loop 避免反复建/关，连接池由 httpx 空闲超时自己回收。
+        """
+        with self._lock:
+            if self._loop is None or self._loop.is_closed():
+                self._loop = asyncio.new_event_loop()
+                self._loop_thread = threading.Thread(
+                    target=self._loop.run_forever,
+                    name="yaro-event-loop",
+                    daemon=True,
+                )
+                self._loop_thread.start()
+            return self._loop
+
     def _run_thread(self, store: SessionStore, state: RunState, task: str) -> None:
         try:
-            asyncio.run(self._run_async(store, state, task))
+            loop = self._ensure_loop()
+            future = asyncio.run_coroutine_threadsafe(
+                self._run_async(store, state, task), loop
+            )
+            # 阻塞当前线程直到运行结束；协程里的异常会在这里重新抛出。
+            future.result()
         except BaseException as exc:  # noqa: BLE001 - 线程边界，必须记账而不是静默死掉
             secret = self.settings.api_key
             detail = scrub(f"{type(exc).__name__}: {exc}", secret)
