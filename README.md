@@ -9,7 +9,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <a href="#"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-green.svg"></a>
-  <a href="#"><img alt="tests 318 passed" src="https://img.shields.io/badge/tests-318%20passed-brightgreen.svg"></a>
+  <a href="#"><img alt="tests 321 passed" src="https://img.shields.io/badge/tests-321%20passed-brightgreen.svg"></a>
 </p>
 
 ---
@@ -65,7 +65,7 @@ v0.7 起，编排层从手写事件循环迁到 **LangGraph**（见 [架构](#�
 
 ### 用打包好的 exe（推荐给同事）
 
-解压 `YARO-win64.zip`，双击 `YARO.exe`。目标机**不需要** Python、pip 或联网。
+直接下载 [YARO-win64.zip](https://github.com/cz-041017/YARO/raw/releases/YARO-win64.zip)，解压后双击 `YARO.exe`。目标机**不需要** Python、pip 或联网。
 
 构建见 [packaging/README.md](packaging/README.md)（`packaging\build_windows.ps1`）。
 
@@ -193,7 +193,7 @@ yaro/
 .agents/skills/             # 技能（SKILL.md）
 examples/                   # 最小示例
 docs/                       # ADR + 安装文档
-tests/                      # 318 个用例
+tests/                      # 321 个用例
 ```
 
 ---
@@ -209,7 +209,7 @@ tests/                      # 318 个用例
 | 项目 | 状态 |
 |---|---|
 | 数据链路（体检/切分/渲染/转换） | 实机跑通，pytest 覆盖 |
-| LangGraph 编排 + server.py 换新引擎 | 已接通，`318 passed` + `verify.py 19/19` |
+| LangGraph 编排 + server.py 换新引擎 | 已接通，`321 passed` + `verify.py 19/19` |
 | 预标注 / 训练 / 调优 / 部署 | **代码完成，未做 GPU 实机验证**（需要 CUDA 机器） |
 | 打包 exe | 已构建 `dist/YARO-win64.zip`（v0.7.0，doctor 冒烟通过），**未做换机验收** |
 | 阶段 | v0.7.0（进行中）——**开发者预览**，CLI 与接口可能变 |
@@ -321,7 +321,7 @@ async with mcp_tools([McpServer(name="my-tool", transport="stdio", command="pyth
 
 每个模块都要求：
 
-1. **离线测试**：`python -m pytest -q`（当前 318 passed），不要引入需要网络/API Key/CUDA 的用例。
+1. **离线测试**：`python -m pytest -q`（当前 321 passed），不要引入需要网络/API Key/CUDA 的用例。
 2. **端到端自检**：`python verify.py`（19 步，不花 token）。
 3. **诚实降级**：异常路径要 fail-closed（返回 `ok=False` 而不是抛穿），不确定的结论要显式标注，不要猜。
 
@@ -330,7 +330,7 @@ async with mcp_tools([McpServer(name="my-tool", transport="stdio", command="pyth
 ## 测试与自检
 
 ```sh
-python -m pytest -q      # 离线测试（318 用例，不花 token / 不需要网络）
+python -m pytest -q      # 离线测试（321 用例，不花 token / 不需要网络）
 python verify.py         # 19 步端到端自检（不花 token）
 python -m yaro doctor    # 环境与能力探测（CUDA / 依赖 / egress / 密钥来源）
 ```

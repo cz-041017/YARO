@@ -734,7 +734,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json()
             return harness.set_egress(
                 mode=str(body.get("mode") or ""),
-                allow_public=bool(body.get("allow_public")),
+                allow_public=body.get("allow_public") is True,
             ), 200
         if path == "/api/sessions":
             return harness.create_session(), 200
@@ -746,7 +746,7 @@ class Handler(BaseHTTPRequestHandler):
             action = parts[1] if len(parts) > 1 else ""
             body = self._read_json()
             if action == "run":
-                demo = bool(body.get("demo"))
+                demo = body.get("demo") is True
                 effort = body.get("effort") or None
                 if effort not in (None, "low", "high", "max"):
                     raise ApiError(f"非法 effort：{effort!r}")

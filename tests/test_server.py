@@ -453,6 +453,71 @@ def test_update_egress_env_preserves_other_keys(tmp_path):
     assert text.count("YARO_EGRESS=") == 1  # 旧行被替换，不是追加
 
 
+def test_update_egress_env_replaces_spaced_and_export_lines(tmp_path):
+    """H1 回归：带空格的 KEY = value 与 export 前缀的旧行也必须被替换，否则降档 fail-open。"""
+    from yaro.config import update_egress_env
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DEEPSEEK_API_KEY=sk-test-abc\n"
+        "YARO_EGRESS = full\n"
+        "export YARO_EGRESS_ALLOW_PUBLIC = 1\n"
+        "YARO_MODEL=deepseek-flash\n",
+        encoding="utf-8",
+    )
+    update_egress_env("off", False, directory=tmp_path)
+    text = env_file.read_text(encoding="utf-8")
+    # 其它键保留
+    assert "DEEPSEEK_API_KEY=sk-test-abc" in text
+    assert "YARO_MODEL=deepseek-flash" in text
+    # 旧的 full / 1（无论空格还是 export 格式）都被删掉，不会在重启后覆盖新值
+    assert "YARO_EGRESS = full" not in text
+    assert "YARO_EGRESS_ALLOW_PUBLIC = 1" not in text
+    assert "export YARO_EGRESS" not in text
+    # 新写的 canonical off / 0 各恰好一条
+    assert "YARO_EGRESS=off" in text
+    assert "YARO_EGRESS_ALLOW_PUBLIC=0" in text
+    assert text.count("YARO_EGRESS=") == 1
+    assert text.count("YARO_EGRESS_ALLOW_PUBLIC=") == 1
+
+
+def test_update_egress_env_is_idempotent(tmp_path):
+    """L1 回归：重复调用不堆积注释行/空行，键行各保持一条。"""
+    from yaro.config import update_egress_env
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("YARO_EGRESS=text\n", encoding="utf-8")
+    for _ in range(3):
+        update_egress_env("off", False, directory=tmp_path)
+    text = env_file.read_text(encoding="utf-8")
+    assert text.count("# 出网策略（GUI 写入）") == 1
+    assert text.count("YARO_EGRESS=") == 1
+    assert text.count("YARO_EGRESS_ALLOW_PUBLIC=") == 1
+
+
+def test_resolve_env_path_prefers_cwd_then_root(tmp_path, monkeypatch):
+    """M1 回归：_resolve_env_path 与 load_dotenv 查找顺序一致（cwd 优先，其次 ROOT）。"""
+    import yaro.config as config_module
+
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setattr(config_module, "ROOT", root)
+    monkeypatch.chdir(cwd)
+
+    # 都不存在 → 新建到 cwd/.env
+    assert config_module._resolve_env_path() == cwd / ".env"
+
+    # 只有 ROOT/.env 存在 → 写到 ROOT（不再新建 cwd/.env 遮蔽它）
+    (root / ".env").write_text("YARO_MODEL=deepseek-flash\n", encoding="utf-8")
+    assert config_module._resolve_env_path() == root / ".env"
+
+    # cwd/.env 也存在 → cwd 优先（与 load_dotenv 第一命中一致）
+    (cwd / ".env").write_text("YARO_EGRESS=off\n", encoding="utf-8")
+    assert config_module._resolve_env_path() == cwd / ".env"
+
+
 def test_empty_task_is_rejected(server):
     base = server["base"]
     _, created = call(base, "/api/sessions", method="POST", body={})

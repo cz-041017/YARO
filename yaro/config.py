@@ -84,33 +84,57 @@ def load_dotenv(path: Path | None = None) -> None:
         return
 
 
+_EGRESS_MARKER = "# 出网策略（GUI 写入）"
+
+
+def _env_key(line: str) -> str | None:
+    """解析一行 .env 的键名，容忍 ``KEY = value`` 空格、``export `` 前缀、行内 ``#`` 注释。
+
+    返回 None 表示该行不含键（空行/注释），调用方据此保留。
+    """
+    s = line.strip()
+    if not s or s.startswith("#") or "=" not in s:
+        return None
+    if s.startswith("export "):
+        s = s[len("export "):].lstrip()
+    return s.split("=", 1)[0].strip()
+
+
+def _resolve_env_path() -> Path:
+    """返回 ``load_dotenv`` 实际会读到的那个 ``.env``（与它的查找顺序一致）。"""
+    for candidate in (Path.cwd() / ".env", ROOT / ".env"):
+        if candidate.exists():
+            return candidate
+    return Path.cwd() / ".env"
+
+
 def update_egress_env(mode: str, allow_public: bool, *, directory: Path | None = None) -> Path:
-    """把出网策略写进当前目录的 ``.env``（GUI 一键开关的落地）。
+    """把出网策略写进 ``load_dotenv`` 实际读取的那个 ``.env``（GUI 一键开关的落地）。
 
-    只改 ``YARO_EGRESS`` / ``YARO_EGRESS_ALLOW_PUBLIC`` 两行，其它键（如
-    ``DEEPSEEK_API_KEY``、``YARO_MODEL``）原样保留；文件不存在则创建。返回写入路径。
+    只改 ``YARO_EGRESS`` / ``YARO_EGRESS_ALLOW_PUBLIC`` 两行（容忍空格/``export`` 前缀/
+    行内注释等格式），其它键（如 ``DEEPSEEK_API_KEY``、``YARO_MODEL``）原样保留；
+    文件不存在则创建。返回写入路径。
 
-    ``directory`` 仅供测试注入（默认 ``Path.cwd()``），生产路径是"用户启动目录下的 .env"。
+    ``directory`` 仅供测试注入；默认解析到与 ``load_dotenv`` 相同的文件
+    （当前目录/.env 优先，其次仓库根/.env），避免新建 cwd/.env 遮蔽仓库根/.env。
 
     注意：这是**持久化**（下次启动生效）；运行时立即生效走 ``Harness.set_egress``
     里重建不可变策略那一步，两者必须一致。
     """
-    path = (directory or Path.cwd()) / ".env"
+    path = (directory / ".env") if directory is not None else _resolve_env_path()
     lines: list[str] = []
     if path.exists():
         lines = path.read_text(encoding="utf-8").splitlines()
     kept = [
         line
         for line in lines
-        if not (
-            line.strip().startswith("YARO_EGRESS=")
-            or line.strip().startswith("YARO_EGRESS_ALLOW_PUBLIC=")
-        )
+        if _env_key(line) not in ("YARO_EGRESS", "YARO_EGRESS_ALLOW_PUBLIC")
+        and line.strip() != _EGRESS_MARKER
     ]
     while kept and not kept[-1].strip():  # 去末尾空行，避免越写越长
         kept.pop()
     kept.append("")
-    kept.append("# 出网策略（GUI 写入）")
+    kept.append(_EGRESS_MARKER)
     kept.append(f"YARO_EGRESS={mode}")
     kept.append(f"YARO_EGRESS_ALLOW_PUBLIC={'1' if allow_public else '0'}")
     kept.append("")
