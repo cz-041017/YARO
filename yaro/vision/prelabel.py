@@ -282,6 +282,7 @@ def prelabel_dataset(
     out: str = "proposals",
     conf: float = 0.35,
     limit: int | None = None,
+    subset: list[str] | None = None,
     model: Path | str | None = None,
     device: str = "auto",
     on_progress: Callable[[int, int, str], None] | None = None,
@@ -297,6 +298,14 @@ def prelabel_dataset(
     images = [item for item in scan["items"] if item.get("width") and item.get("height")]
     if limit:
         images = images[: int(limit)]
+    if subset is not None:
+        # M1 修复：按完整相对路径匹配（含 split），不折叠成 stem——否则 yolo-split 数据集
+        # 里 train/val 同名图会跨 split 命中多张、把 val/test 图当难例回灌。
+        def _norm(p: str) -> str:
+            return str(Path(p)).replace("\\", "/")
+
+        wanted = {_norm(s) for s in subset}
+        images = [item for item in images if _norm(item["image"]) in wanted]
     if not images:
         raise DegradedBackend("数据集中没有可用图片（或图片头解析失败）")
 

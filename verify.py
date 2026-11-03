@@ -224,6 +224,7 @@ def step_tamper(ctx: dict[str, Any]) -> str:
     report = store.verify()
     need(not report["ok"], "篡改/乱序之后 verify() 仍然报 ok=True")
     need(len(report["problems"]) >= 1, "verify() 没给出具体问题清单")
+    shutil.rmtree(target.parent, ignore_errors=True)  # 清理本次篡改检测的临时副本
     return f"篡改与乱序均被捕获（{len(report['problems'])} 条问题）"
 
 
@@ -711,6 +712,72 @@ def step_packaging(ctx: dict[str, Any]) -> str:
     return f"契约双份一致 {len(PKG_CONTRACT.read_bytes())}B · package-data 就位 · 安装脚本与文档齐全"
 
 
+def step_graph_runtime(ctx: dict[str, Any]) -> str:
+    """LangGraph 垂直切片：distill 图 + 审计账本 + 审批，端到端跑一轮（离线 fake）。"""
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from yaro.approval import ApprovalPolicy, ApprovalRule
+    from yaro.audit import AuditLedger
+    from yaro.graph.runtime import run_distillation
+
+    class _Vision:
+        def prelabel(self, dataset: str, **kw: Any) -> dict[str, Any]:
+            return {"warnings": []}
+
+        def review_queue(self, dataset: str) -> dict[str, Any]:
+            return {"pending": ["a.txt"], "count": 1}
+
+        def train(self, dataset: str, **kw: Any) -> dict[str, Any]:
+            return {"ok": True, "best_map50": 0.5, "epochs_done": 5, "findings": []}
+
+        def apply_proposals(self, dataset: str, **kw: Any) -> dict[str, Any]:
+            return {"applied": 1, "kept": 0, "overwrite": bool(kw.get("overwrite"))}
+
+    class _Model:
+        def invoke(self, messages: Any) -> str:
+            return "停止：mAP 已达标"
+
+    def _resolve(item: Any) -> dict[str, Any]:
+        kind = item.get("kind") if isinstance(item, dict) else None
+        if kind == "review":
+            return {"approve": True}
+        if kind == "approve":
+            return {"approve": True}
+        return {"approve": False}
+
+    tmp = Path(tempfile.mkdtemp(prefix="yaro-graph-"))
+    try:
+        audit = AuditLedger.create(tmp / "events.jsonl")
+
+        def _drive(kw: dict[str, Any]) -> dict[str, Any]:
+            out = run_distillation(**kw)
+            guard = 0
+            while out["interrupted"] is not None and guard < 20:
+                guard += 1
+                out = run_distillation(resume=_resolve(out["interrupted"]), thread_id=out["thread_id"], **kw)
+            return out
+
+        out = _drive(dict(dataset="demo/dataset", model=_Model(), vision=_Vision(),
+                          checkpointer=MemorySaver(), audit=audit))
+        need(out["interrupted"] is None, f"蒸馏没跑完，仍挂在 interrupt：{out['interrupted']}")
+        need(out["state"]["stop_reason"] == "done", f"stop_reason 不对：{out['state']['stop_reason']}")
+        need(out["audit"]["ok"], f"审计链校验失败：{out['audit']['problems']}")
+        need(out["audit"]["events"] >= 4, f"审计事件不足：{out['audit']['events']}")
+
+        # 审批 deny：train 被拦、不执行，仍走完闭环且审计链完整
+        policy = ApprovalPolicy(mode="default", rules=(ApprovalRule("train_run", "deny"),))
+        audit2 = AuditLedger.create(tmp / "events2.jsonl")
+        out2 = _drive(dict(dataset="demo/dataset", model=_Model(), vision=_Vision(),
+                           checkpointer=MemorySaver(), audit=audit2, approval=policy))
+        need(out2["state"]["metrics"]["ok"] is False, "审批 deny 后 train 仍执行")
+        need(out2["state"]["metrics"].get("denied") is True, "deny 没写 denied 标记")
+        need(out2["audit"]["ok"], "deny 路径审计链失败")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    return f"graph 蒸馏 {out['state']['iteration']} 轮 / 审计 {out['audit']['events']} 条 / deny 生效"
+
+
 def step_http(ctx: dict[str, Any]) -> str:
     """真起一个 HTTP 服务，用真实请求走完：静态 → 建会话 → demo 运行 → 回滚 → 产物。"""
     from yaro.server import Harness, _bind
@@ -880,6 +947,7 @@ STEPS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("前端接线一致性", step_static_assets),
     ("隐私与出网边界", step_egress),
     ("打包自包含", step_packaging),
+    ("LangGraph 垂直切片", step_graph_runtime),
     ("HTTP 全链路", step_http),
 ]
 

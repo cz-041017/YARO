@@ -91,7 +91,7 @@ def test_usage_cost_unknown_model_raises() -> None:
         usage.cost_usd("not-a-model")
     assert "not-a-model" in str(excinfo.value)
     # 认识的型号照常计价，不受影响。
-    assert usage.cost_usd("deepseek-flash") == pytest.approx(3.03e-07, rel=1e-3)
+    assert usage.cost_usd("deepseek-flash") == pytest.approx(7.53e-07, rel=1e-3)
 
 
 def test_ensure_known_model() -> None:

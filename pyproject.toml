@@ -35,9 +35,30 @@ keyring = ["keyring>=24"]
 # 独立窗口：`yaro app` 用系统 WebView 打开 GUI，不受浏览器扩展/强制深色影响。
 # 多人协作、给同事分发时建议装它；没装也能用 `yaro gui` 走浏览器。
 desktop = ["pywebview>=5.0"]
+# LangGraph 编排（v0.7+ 的核心运行时）：
+#   - langgraph + langgraph-checkpoint-sqlite：状态图 + 会话树回滚（checkpoint）
+#   - langchain-openai：DeepSeek 是 OpenAI 兼容协议，用 ChatOpenAI 做基座（见 yaro/provider）
+#   - langchain-mcp-adapters：消费社区 MCP 视觉工具
+graph = [
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
+    "langchain-openai>=0.2",
+    "langgraph-checkpoint-sqlite>=2.0",
+    "langchain-mcp-adapters>=0.1",
+]
 dev = ["pytest>=8"]
 # 一次装齐"能跑起来"的推荐组合
-full = ["openai>=1.40", "numpy>=1.26", "opencv-python-headless>=4.9", "pywebview>=5.0"]
+full = [
+    "openai>=1.40",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "pywebview>=5.0",
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
+    "langchain-openai>=0.2",
+    "langgraph-checkpoint-sqlite>=2.0",
+    "langchain-mcp-adapters>=0.1",
+]
 
 [project.scripts]
 yaro = "yaro.cli:main"

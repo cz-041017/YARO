@@ -40,10 +40,13 @@ from .contracts import ContractError, PRICES_USD_PER_MTOK, Usage
 from .demo import ensure_demo_assets
 from .egress import MODE_LABELS, summarize_policy
 from .gates import scan_files
-from .llm.deepseek import DeepSeek, is_peak
-from .llm.demo import DemoLLM
-from .loop.agent import Agent, Budget
+from .graph.agent import DEFAULT_KEEP_TAIL_RATIO, DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_TOKENS
+from .graph.runner import run_agent
+from .llm.deepseek import is_peak
 from .memory.artifacts import ArtifactStore
+from .provider.demo import DemoChatModel
+from .provider.guard import GuardedModel
+from .provider.models import build_model
 from .memory.session import SessionStore
 from .secrets import status as secret_status
 from .secrets import scrub
@@ -143,7 +146,7 @@ class Harness:
                 stored = False
             if not stored:
                 secret_module.set_api_key(self.settings.home, value)
-            self.settings = dataclasses.replace(
+            self.settings = replace(
                 self.settings,
                 api_key=value,
                 api_key_source="keyring" if stored else "file",
@@ -154,7 +157,7 @@ class Harness:
             except Exception:  # noqa: BLE001
                 pass
             secret_module.clear_api_key(self.settings.home)
-            self.settings = dataclasses.replace(self.settings, api_key="", api_key_source="none")
+            self.settings = replace(self.settings, api_key="", api_key_source="none")
         else:
             raise ApiError(f"未知操作：{action!r}（可选 set / clear）")
         # 出网策略里也带着密钥用于脱敏，必须同步重建。
@@ -188,9 +191,9 @@ class Harness:
             "artifact_count": len(self.artifacts),
             "artifact_bytes": self.artifacts.stats()["bytes"],
             "budget": {
-                "max_turns": Budget().max_turns,
-                "max_cost_usd": Budget().max_cost_usd,
-                "compact_at_tokens": Budget().compact_at_tokens,
+                "max_iterations": DEFAULT_MAX_ITERATIONS,
+                "max_tokens": DEFAULT_MAX_TOKENS,
+                "keep_tail_ratio": DEFAULT_KEEP_TAIL_RATIO,
             },
             "prices": PRICES_USD_PER_MTOK,
             "peak_now": is_peak(),
@@ -371,32 +374,28 @@ class Harness:
             step=0,
         )
         registry = ToolRegistry(tools)
-        llm: Any
         if state.demo:
-            llm = DemoLLM()
+            model: Any = DemoChatModel(delay_s=0.0)
+            # demo 用假 usage（deepseek-flash 价格），固定 flash 计价，不受 YARO_MODEL 影响（修 L2）。
+            cost_model = "deepseek-flash"
         else:
-            llm = DeepSeek(
-                api_key=settings.api_key,
-                base_url=settings.base_url,
-                model=settings.model,
-                egress=self.egress,
-            )
-        agent = Agent(
-            llm=llm,
-            registry=registry,
-            session=store,
-            artifacts=self.artifacts,
-            budget=Budget(),
+            base = build_model(settings, model=settings.model, effort=state.effort)
+            model = GuardedModel(base, policy=self.egress, base_url=settings.base_url)
+            cost_model = settings.model
+        await run_agent(
+            model,
+            registry,
+            store,
+            task,
+            system=system_prompt(),
             branch="main",
             run_id=run_id,
-            model_plan=settings.model_plan,
-            effort=state.effort,
-            peak_billing=is_peak(),
-            system=system_prompt(),
-            stop_check=state.stop_event.is_set,
+            max_iterations=DEFAULT_MAX_ITERATIONS,
             egress=self.egress,
+            stop_check=state.stop_event.is_set,
+            model_name=cost_model,
+            peak=is_peak(),
         )
-        await agent.run(task)
 
     def stop(self, session_id: str) -> dict[str, Any]:
         with self._lock:

@@ -4,6 +4,11 @@
 # the file has no UTF-8 BOM, so non-ASCII text breaks parsing with confusing errors.
 # Keep this file ASCII; put Chinese documentation in .md files.
 #
+# Why $ErrorActionPreference = "Continue": native commands (git) write progress and
+# hints to stderr. With "Stop", any stderr line from git becomes a terminating
+# NativeCommandError (that is what broke the first version at `git remote get-url`).
+# So: never let stderr kill us; check $LASTEXITCODE explicitly after every git call.
+#
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\publish_github.ps1 -DryRun
 #   powershell -ExecutionPolicy Bypass -File scripts\publish_github.ps1
@@ -24,10 +29,24 @@ param(
     [switch]$DryRun
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 Write-Host "repo: $root"
+
+# Run a git command; return its captured output lines (stdout+stderr merged) and
+# expose the exit code via the script-scope variable $GitExit.
+function Invoke-Git {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
+    $output = & git @GitArgs 2>&1
+    $script:GitExit = $LASTEXITCODE
+    return @($output)
+}
+
+function Write-GitOutput {
+    param([string[]]$Lines)
+    foreach ($line in $Lines) { Write-Host ("      " + $line) }
+}
 
 # ---------------------------------------------------------------- 1. git check
 $gitCmd = Get-Command git -ErrorAction SilentlyContinue
@@ -36,28 +55,29 @@ if (-not $gitCmd) {
     Write-Host "       https://git-scm.com/download/win"
     exit 1
 }
-Write-Host ("git: " + (& git --version))
+$version = Invoke-Git --version
+Write-Host ("git: " + ($version -join " "))
 
 # ---------------------------------------------------------------- 2. init
 if (-not (Test-Path (Join-Path $root ".git"))) {
     Write-Host "[1/6] git init -b $Branch"
-    & git init -b $Branch | Out-Null
+    $out = Invoke-Git init -b $Branch
+    if ($script:GitExit -ne 0) { Write-GitOutput $out; Write-Host "ERROR: git init failed" -ForegroundColor Red; exit 1 }
 } else {
     Write-Host "[1/6] .git already exists, reusing it"
 }
 
 # ---------------------------------------------------------------- 3. stage
 Write-Host "[2/6] git add -A"
-& git add -A
-if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: git add failed" -ForegroundColor Red; exit 1 }
+$out = Invoke-Git add -A
+if ($script:GitExit -ne 0) { Write-GitOutput $out; Write-Host "ERROR: git add failed" -ForegroundColor Red; exit 1 }
 
-$staged = @(& git diff --cached --name-only)
+$out = Invoke-Git diff --cached --name-only
+if ($script:GitExit -ne 0) { Write-GitOutput $out; Write-Host "ERROR: cannot list staged files" -ForegroundColor Red; exit 1 }
+$staged = @($out | Where-Object { $_ -ne "" -and $_ -notmatch '^warning:' })
 $count = $staged.Count
 Write-Host ("      staged files: " + $count)
-if ($count -eq 0) {
-    Write-Host "Nothing to commit." -ForegroundColor Yellow
-    if ($DryRun) { exit 0 }
-} else {
+if ($count -gt 0) {
     $staged | Sort-Object | Select-Object -First 30 | ForEach-Object { Write-Host ("      " + $_) }
     if ($count -gt 30) { Write-Host ("      ... and " + ($count - 30) + " more") }
 }
@@ -103,10 +123,12 @@ if ($DryRun) {
 }
 
 # ---------------------------------------------------------------- 5. identity
-if ($AuthorName)  { & git config user.name  $AuthorName }
-if ($AuthorEmail) { & git config user.email $AuthorEmail }
-$currentName  = (& git config user.name) 2>$null
-$currentEmail = (& git config user.email) 2>$null
+if ($AuthorName)  { Invoke-Git config user.name  $AuthorName  | Out-Null }
+if ($AuthorEmail) { Invoke-Git config user.email $AuthorEmail | Out-Null }
+$nameOut = Invoke-Git config user.name
+$currentName = ($nameOut -join "").Trim()
+$mailOut = Invoke-Git config user.email
+$currentEmail = ($mailOut -join "").Trim()
 if (-not $currentName -or -not $currentEmail) {
     Write-Host "ERROR: git identity not configured." -ForegroundColor Red
     Write-Host "       git config --global user.name  `"Your Name`""
@@ -114,34 +136,48 @@ if (-not $currentName -or -not $currentEmail) {
     Write-Host "       (or rerun this script with -AuthorName / -AuthorEmail)"
     exit 3
 }
+Write-Host ("      author: " + $currentName + " <" + $currentEmail + ">")
 
 # ---------------------------------------------------------------- 6. commit
 if ($count -gt 0) {
     Write-Host "[4/6] git commit"
-    & git commit -m $Message | Out-Host
-    if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: git commit failed" -ForegroundColor Red; exit 1 }
+    $out = Invoke-Git commit -m $Message
+    Write-GitOutput $out
+    if ($script:GitExit -ne 0) { Write-Host "ERROR: git commit failed" -ForegroundColor Red; exit 1 }
 } else {
-    Write-Host "[4/6] no changes to commit"
+    $headOut = Invoke-Git rev-parse --verify HEAD
+    if ($script:GitExit -eq 0) {
+        Write-Host "[4/6] working tree clean, nothing to commit"
+    } else {
+        Write-Host "[4/6] nothing staged and no commit yet: check .gitignore" -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 # ---------------------------------------------------------------- 7. remote
-$existing = (& git remote get-url origin) 2>$null
-if ($LASTEXITCODE -eq 0 -and $existing) {
-    if ($existing -ne $Remote) {
-        Write-Host ("[5/6] update origin: " + $existing + " -> " + $Remote)
-        & git remote set-url origin $Remote
+Write-Host "[4.5/6] remote origin"
+$listOut = Invoke-Git remote
+$remotes = @($listOut | Where-Object { $_ -ne "" })
+if ($remotes -contains "origin") {
+    $urlOut = Invoke-Git remote get-url origin
+    $existing = ("$urlOut").Trim()
+    if ($script:GitExit -eq 0 -and $existing -ne $Remote) {
+        Write-Host ("      update origin: " + $existing + " -> " + $Remote)
+        Invoke-Git remote set-url origin $Remote | Out-Null
     } else {
-        Write-Host "[5/6] origin already points to $Remote"
+        Write-Host ("      origin already points to " + $Remote)
     }
 } else {
-    Write-Host "[5/6] git remote add origin $Remote"
-    & git remote add origin $Remote
+    Write-Host ("      git remote add origin " + $Remote)
+    $out = Invoke-Git remote add origin $Remote
+    if ($script:GitExit -ne 0) { Write-GitOutput $out; Write-Host "ERROR: git remote add failed" -ForegroundColor Red; exit 1 }
 }
 
 # ---------------------------------------------------------------- 8. push
-Write-Host "[6/6] git push -u origin $Branch"
-& git push -u origin $Branch
-if ($LASTEXITCODE -ne 0) {
+Write-Host "[5/6] git push -u origin $Branch"
+$out = Invoke-Git push -u origin $Branch
+Write-GitOutput $out
+if ($script:GitExit -ne 0) {
     Write-Host ""
     Write-Host "Push failed. Most common causes:" -ForegroundColor Red
     Write-Host "  1. SSH key not registered:   ssh -T git@github.com"
@@ -155,5 +191,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ""
-Write-Host "Done. Open: https://github.com/cz-041017/YARO" -ForegroundColor Green
-& git log --oneline -1
+Write-Host "[6/6] Done. Open: https://github.com/cz-041017/YARO" -ForegroundColor Green
+$logOut = Invoke-Git log --oneline -1
+Write-GitOutput $logOut
+exit 0

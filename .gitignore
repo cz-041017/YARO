@@ -34,6 +34,13 @@ pytest-of-*/
 pytest-*/
 .pytest_tmp/
 
+# --- verify.py / 测试残留的临时副本（篡改检测临时目录、临时数据集） ---
+# tmp* 同时匹配文件与目录：本环境 tempfile.gettempdir() 会回退到仓库根（DSH 沙箱），
+# 第三方库（mcp/langgraph/langchain）无 dir 参数时会把 mkstemp/NamedTemporaryFile 落在仓库根。
+tmp*
+yaro-tamper-*/
+yaro-verify-*/
+
 # --- 开发文档（内部保留，不随仓库发布） ---
 docs/ADR-*.md
 .devnotes/

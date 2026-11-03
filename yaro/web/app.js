@@ -393,7 +393,8 @@ function renderRunEnd(event) {
   const reason = p.stop_reason || "done";
   const label = {
     done: "完成", stopped: "已停止", stuck: "卡死（重复调用）",
-    max_turns: "达到轮数上限", max_cost: "达到成本上限", max_wall: "达到时长上限",
+    max_turns: "达到轮数上限", max_iterations: "达到轮数上限",
+    max_cost: "达到成本上限", max_wall: "达到时长上限",
     tool_errors: "连续工具失败", error: "运行出错",
   }[reason] || reason;
   const usage = p.usage || {};

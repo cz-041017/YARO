@@ -81,7 +81,10 @@ function Install-Deps {
     # straight from the source tree (see pathex in yaro.spec), so an editable
     # install is not needed. That also avoids the build-isolation step, which is
     # what silently stalls pip 26 on some locked-down machines.
-    $targets = @("--upgrade", "pywebview>=5.0", "openai>=1.40", "pyinstaller")
+    $targets = @("--upgrade", "pywebview>=5.0", "openai>=1.40", "pyinstaller",
+        # LangGraph runtime (v0.7+ core). langchain-openai is the DeepSeek base;
+        # langchain-mcp-adapters pulls the `mcp` SDK for community MCP tools.
+        "langgraph>=0.2", "langchain-core>=0.3", "langchain-openai>=0.2", "langchain-mcp-adapters>=0.1")
     if ($WithCv) { $targets += @("numpy>=1.26", "opencv-python-headless>=4.9") }
     $shown = "pip install " + ($targets -join " ")
     Write-Host "      > $shown" -ForegroundColor DarkGray

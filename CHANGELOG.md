@@ -1,5 +1,45 @@
 # CHANGELOG
 
+## v0.7.0（进行中）— LangGraph 重构
+
+按用户 m03658 的 9 条需求把 YARO 从"手写事件溯源循环"迁到 LangGraph 架构（B 方案：
+全用预置抽象，但 DeepSeek `reasoning_content` 序列化与视觉/出网闸自持）。旧 `loop/agent.py` +
+`memory/session.py` 仍保留为回退路径（server.py 还在用），新 `yaro/graph/` 是并行新骨架。
+
+- **provider 层**（`yaro/provider/`）：`ChatDeepSeek(ChatOpenAI)` 子类补齐 DeepSeek
+  `reasoning_content` 逐轮回传——覆盖响应解析层 `_create_chat_result` /
+  `_convert_chunk_to_generation_chunk` 把 reasoning_content 抄进 `additional_kwargs`，
+  `_get_request_payload` 注入、`_thinking_enabled` 双源、图仅 user 校验；`build_model`、
+  `GuardedModel`（invoke 前过 egress + 脱敏）。
+- **graph 层**（`yaro/graph/`）：`GraphState` + `build_agent`（agent/tools/finalize 节点，
+  预算前置 + 悬空 tool_call 兜底 + `tool_selector` 工具延迟加载）；`context.py` 上下文经济
+  原语（`estimate_tokens`/`find_safe_cut`/`summarize_prefix`/`select_schemas` 等）。
+- **蒸馏闭环垂直切片**：`distill.py`（label→review(HITL)→train→analyze 循环子图）+
+  `runtime.py`（`run_distillation` 串 SqliteSaver + 审批 + 审计）+ `audit.py`（digest 链账本，
+  从 SessionStore 抽出）。
+- **配套模块**：`skills.py`（SKILL.md 渐进披露）、`goal.py`（持久目标状态机）、
+  `approval.py`（PLAN/DEFAULT/YOLO 工具审批）、`agent_eval.py`（故障注入 + 行为评分）、
+  `vision/active.py`（`select_hard_examples` 主动学习选难例，子进程跑学生权重）。
+- **蒸馏闭环打通**：`distill.py` 加 select_hard 节点（analyze→select_hard→label，`label_node`
+  传 `subset=state["hard"]` 只预标注难例）；Skills/Goal 接进 `run_distillation`（analyze 提示
+  system/用户分离注入目标 + 技能目录，goal 写回按 `stop_reason=="done" and review.approve and
+  metrics.ok is True` 判达成）。
+- **server.py 换新 graph 引擎**：`graph/runner.py`（会话桥：`session_to_langchain` +
+  `run_agent` 用 `astream(stream_mode="values")` 增量落账、按消息 id 去重（compact 删旧前缀
+  不丢已付费事件），映射回 SessionStore 的 user/assistant/tool/run_end 事件，GUI/rewind/fork/
+  verify 不感知引擎已换）、`provider/demo.py`（DemoChatModel 适配旧 DemoLLM 剧本）、
+  `provider/usage.py`（`usage_from_messages` 从 `response_metadata["deepseek_usage"]` 还原
+  hit/miss/out 拆分，缓存价差 50× 记账）、`build_agent` 加 `stop_check` 协作式取消 + `stuck`
+  护栏（`max_identical_calls=2` **当前 user 轮内**连续相同 tool_calls 即停，遇 HumanMessage 轮边界即止、不跨轮泄漏）。旧 `loop/agent.py` 不再被
+  server.py import（`memory/session.py` 仍作 GUI 事件日志）。
+- **MCP 对内消费**：`yaro/mcp.py`（`McpServer`/`McpTool`/`mcp_tools` 包 langchain_mcp_adapters，
+  零第三方 import、pydantic schema 转 OpenAI、异常兜 ok=False，`tests/test_mcp.py` 含真实
+  FastMCP stdio 端到端）。
+- 每个模块均 spawn 子智能体对抗性审查并修完致命/高危项；全量 `pytest -q` 302 passed、
+  `verify.py` 19/19（截至本条目）。
+- 尚未接线：vision parts 注入（旧 `_request_messages` 把工具产出诊断图注入下一轮，新图无，
+  模型只看文本摘要）、max_cost/max_wall 预算、打包 app 待续。
+
 ## v0.6.2 — 未知型号直接报错 + GUI 里的 API Key 入口
 
 用户要求："未知型号直接报错，并且在 gui 中加入 api_key 添加入口。"

@@ -17,6 +17,14 @@ from PyInstaller.utils.hooks import collect_submodules
 ROOT = Path(SPECPATH).parent  # noqa: F821  (SPECPATH 由 PyInstaller 注入)
 
 hiddenimports = collect_submodules("webview")
+# LangGraph 运行时用 importlib 做动态导入（checkpoint 序列化器、pregel 运行时、
+# MCP 适配器），PyInstaller 的静态分析抓不全，必须显式收集子模块，否则打包后的
+# `yaro gui`/`yaro app` 会在 `import yaro.graph.runner` 处 ImportError。
+for _mod in ("langgraph", "langchain_core", "langchain_openai", "langchain_mcp_adapters", "mcp"):
+    try:
+        hiddenimports += collect_submodules(_mod)
+    except Exception:  # pragma: no cover - 构建机上缺失某包时继续，让静态分析兜底
+        pass
 
 a = Analysis(  # noqa: F821
     [str(ROOT / "packaging" / "entry.py")],
