@@ -67,6 +67,9 @@ v0.7 起，编排层从手写事件循环迁到 **LangGraph**（见 [架构](#�
 
 直接下载 [YARO-win64.zip](https://github.com/cz-041017/YARO/raw/releases/YARO-win64.zip)，解压后双击 `YARO.exe`。目标机**不需要** Python、pip 或联网。
 
+> **中国大陆用户**：如果上面的链接打不开（提示 `raw.githubusercontent.com` 无法访问/连接被重置），改用镜像：
+> **[YARO-win64.zip（gh-proxy 镜像）](https://gh-proxy.com/https://raw.githubusercontent.com/cz-041017/YARO/releases/YARO-win64.zip)**
+
 构建见 [packaging/README.md](packaging/README.md)（`packaging\build_windows.ps1`）。
 
 ### 从源码运行
