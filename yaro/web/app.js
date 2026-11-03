@@ -207,7 +207,8 @@ function renderHeader() {
     dot.className = "dot";
     $("head-verify").hidden = true;
     $("head-demo").hidden = true;
-    $("btn-run").disabled = true;
+    $("btn-run").disabled = false;
+    $("btn-stop").disabled = true;
     $("btn-verify").disabled = true;
     return;
   }
