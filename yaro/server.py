@@ -674,6 +674,31 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         self._dispatch("POST")
 
+    def do_OPTIONS(self) -> None:  # noqa: N802 - 浏览器 CORS 预检
+        """响应 CORS 预检（OPTIONS），避免基类返回 501 ``Unsupported method``。
+
+        同源请求本不会发 OPTIONS；只有页面从另一个本机来源（如 ``localhost`` 访问
+        ``127.0.0.1``、或 pywebview/浏览器内部策略）发起时才会预检。我们只对通过
+        ``_guard``（本机 Host + 本机 Origin）的预检放行，且只授 GET/POST/OPTIONS、
+        不设 cookie、不开放任意跨源——安全边界与 GET/POST 完全一致。
+        """
+        try:
+            self._guard(allow_public=bool(getattr(self.harness, "allow_public_gui", False)))
+            origin = (self.headers.get("Origin") or "").strip()
+            self.send_response(204)
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        except ApiError as exc:
+            self._send_json({"error": str(exc)}, exc.status)
+        except BaseException as exc:  # pragma: no cover
+            self._send_json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+
     # -- 路由 ----------------------------------------------------------- #
 
     def _route_get(self, path: str, query: dict[str, str]) -> tuple[Any, int]:

@@ -593,3 +593,32 @@ def test_unknown_api_is_404(server):
     status, payload = call(server["base"], "/api/nope")
     assert status == 404
     assert "error" in payload
+
+
+def test_options_preflight_returns_204_not_501(server):
+    """OPTIONS 预检不再返回 501（基类 Unsupported method），而是 204 + 本机 Origin 回显。"""
+    base = server["base"]
+    request = urllib.request.Request(
+        base + "/api/sessions",
+        data=None,
+        headers={"Origin": "http://127.0.0.1:8765"},
+        method="OPTIONS",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        assert response.status == 204
+        assert response.headers.get("Access-Control-Allow-Origin") == "http://127.0.0.1:8765"
+        assert "POST" in (response.headers.get("Access-Control-Allow-Methods") or "")
+
+
+def test_options_preflight_rejects_foreign_origin(server):
+    """非本机 Origin 的预检仍被 _guard 拒（403），不因加了 OPTIONS 而放开跨源。"""
+    base = server["base"]
+    request = urllib.request.Request(
+        base + "/api/sessions",
+        data=None,
+        headers={"Origin": "http://evil.example.com"},
+        method="OPTIONS",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(request, timeout=20)
+    assert exc.value.code == 403

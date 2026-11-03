@@ -57,7 +57,10 @@
   按 key 精确匹配（容忍 `KEY = value` 空格 / `export ` 前缀 / 行内注释），落到 `load_dotenv` 实际读取的
   同一 `.env`（cwd 优先、其次仓库根，不新建 cwd/.env 遮蔽仓库根），幂等不堆积注释；`/api/egress` 的
   `allow_public` 改 `is True` 严格解析（字符串 "false" 不再误开公网）。
-- 每个模块均 spawn 子智能体对抗性审查并修完致命/高危项；全量 `pytest -q` 321 passed、
+- **HTTP 层 OPTIONS 预检**：`server.py` 加 `do_OPTIONS`（基类对未覆盖方法返 501 ``Unsupported method``，
+  GUI 从另一个本机来源访问时浏览器会发 CORS 预检）——回 204 + 回显本机 Origin + 只授 GET/POST/OPTIONS，
+  `_guard` 仍挡非本机 Host/Origin（跨源不放开）。
+- 每个模块均 spawn 子智能体对抗性审查并修完致命/高危项；全量 `pytest -q` 323 passed、
   `verify.py` 19/19（截至本条目）。
 - 尚未接线：max_cost/max_wall 预算；打包 app 已出 `dist/YARO-win64.zip`（v0.7.0，含
   langgraph/langchain 隐藏导入 + doctor 冻结安装检查不再误报 egg-info 旧版本），换机验收属文档化后续项。
