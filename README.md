@@ -9,7 +9,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <a href="#"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-green.svg"></a>
-  <a href="#"><img alt="tests 302 passed" src="https://img.shields.io/badge/tests-302%20passed-brightgreen.svg"></a>
+  <a href="#"><img alt="tests 315 passed" src="https://img.shields.io/badge/tests-315%20passed-brightgreen.svg"></a>
 </p>
 
 ---
@@ -193,7 +193,7 @@ yaro/
 .agents/skills/             # 技能（SKILL.md）
 examples/                   # 最小示例
 docs/                       # ADR + 安装文档
-tests/                      # 302 个用例
+tests/                      # 315 个用例
 ```
 
 ---
@@ -209,9 +209,9 @@ tests/                      # 302 个用例
 | 项目 | 状态 |
 |---|---|
 | 数据链路（体检/切分/渲染/转换） | 实机跑通，pytest 覆盖 |
-| LangGraph 编排 + server.py 换新引擎 | 已接通，`302 passed` + `verify.py 19/19` |
+| LangGraph 编排 + server.py 换新引擎 | 已接通，`315 passed` + `verify.py 19/19` |
 | 预标注 / 训练 / 调优 / 部署 | **代码完成，未做 GPU 实机验证**（需要 CUDA 机器） |
-| 打包 exe | 配置已更新，**未做换机验收** |
+| 打包 exe | 已构建 `dist/YARO-win64.zip`（v0.7.0，doctor 冒烟通过），**未做换机验收** |
 | 阶段 | v0.7.0（进行中）——**开发者预览**，CLI 与接口可能变 |
 
 **任何"跑通"结论都以你机器上的输出为准**；首次使用请按 [docs/INSTALL.md](docs/INSTALL.md) 的验收清单走一遍。
@@ -321,7 +321,7 @@ async with mcp_tools([McpServer(name="my-tool", transport="stdio", command="pyth
 
 每个模块都要求：
 
-1. **离线测试**：`python -m pytest -q`（当前 302 passed），不要引入需要网络/API Key/CUDA 的用例。
+1. **离线测试**：`python -m pytest -q`（当前 315 passed），不要引入需要网络/API Key/CUDA 的用例。
 2. **端到端自检**：`python verify.py`（19 步，不花 token）。
 3. **诚实降级**：异常路径要 fail-closed（返回 `ok=False` 而不是抛穿），不确定的结论要显式标注，不要猜。
 
@@ -330,7 +330,7 @@ async with mcp_tools([McpServer(name="my-tool", transport="stdio", command="pyth
 ## 测试与自检
 
 ```sh
-python -m pytest -q      # 离线测试（302 用例，不花 token / 不需要网络）
+python -m pytest -q      # 离线测试（315 用例，不花 token / 不需要网络）
 python verify.py         # 19 步端到端自检（不花 token）
 python -m yaro doctor    # 环境与能力探测（CUDA / 依赖 / egress / 密钥来源）
 ```

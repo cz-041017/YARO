@@ -44,6 +44,44 @@ class McpServer:
     url: str = ""                # sse: 服务器 URL
 
 
+def servers_from_config(raw: Any) -> list[McpServer]:
+    """把 ``Settings.mcp_servers``（原始 dict 元组，来自 ``YARO_MCP_SERVERS``）转成
+    校验过的 ``McpServer`` 列表。字段级错误在这里抛出（带服务器名，报错可定位）。
+
+    容忍两种调用：传 ``McpServer`` 对象（代码里直接构造）或 dict（配置文件）；其它类型报错。
+    """
+    servers: list[McpServer] = []
+    for item in raw or []:
+        if isinstance(item, McpServer):
+            servers.append(item)
+            continue
+        if isinstance(item, dict):
+            name = str(item.get("name", "")).strip()
+            raw_args = item.get("args") or []
+            raw_env = item.get("env") or {}
+            if not isinstance(raw_args, list):
+                raise ValueError(
+                    f"MCP 服务器 {name!r} 的 args 必须是列表，实际是 {type(raw_args).__name__}"
+                )
+            if not isinstance(raw_env, dict):
+                raise ValueError(
+                    f"MCP 服务器 {name!r} 的 env 必须是对象（dict），实际是 {type(raw_env).__name__}"
+                )
+            servers.append(
+                McpServer(
+                    name=name,
+                    transport=str(item.get("transport", "stdio")).strip() or "stdio",
+                    command=str(item.get("command", "")).strip(),
+                    args=[str(a) for a in raw_args],
+                    env={str(k): str(v) for k, v in raw_env.items()},
+                    url=str(item.get("url", "")).strip(),
+                )
+            )
+            continue
+        raise ValueError(f"MCP 服务器配置必须是对象或 McpServer，实际是 {type(item).__name__}")
+    return servers
+
+
 def _build_connections(servers: list[McpServer]) -> dict[str, dict[str, Any]]:
     """把 McpServer 列表转成 MultiServerMCPClient 需要的 connections dict。"""
     connections: dict[str, dict[str, Any]] = {}

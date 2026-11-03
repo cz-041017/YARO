@@ -6,11 +6,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from .contracts import ensure_known_model
+from .contracts import ContractError, ensure_known_model
 
 PACKAGE_ROOT = Path(__file__).resolve().parent  # yaro/
 ROOT = PACKAGE_ROOT.parent  # 仓库根（开发态）；装成 wheel 后就是 site-packages
@@ -25,6 +27,28 @@ PKG_CONTRACT = PACKAGE_ROOT / "data" / "CONTRACT.md"
 
 def _env(name: str, default: str = "") -> str:
     return (os.environ.get(name) or default).strip()
+
+
+def parse_mcp_servers(raw: str | None) -> tuple[dict[str, Any], ...]:
+    """解析 ``YARO_MCP_SERVERS``（JSON 数组），返回原始 dict 元组。
+
+    只做 JSON 层校验（数组/元素是对象），字段级校验（name/transport/command/url）推迟到
+    ``yaro.mcp.servers_from_config`` 里做——那里有完整错误信息，且 config 层不 import mcp。
+    """
+    if not raw:
+        return ()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ContractError(f"YARO_MCP_SERVERS 不是合法 JSON：{exc}") from exc
+    if not isinstance(data, list):
+        raise ContractError("YARO_MCP_SERVERS 必须是 JSON 数组（[]）")
+    out: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            raise ContractError(f"YARO_MCP_SERVERS 每个元素必须是对象，实际是 {type(item).__name__}")
+        out.append(dict(item))
+    return tuple(out)
 
 
 def resolve_contract_path() -> Path:
@@ -75,6 +99,8 @@ class Settings:
     egress: str = "off"
     egress_allow_public: bool = False
     api_key_source: str = "none"
+    # ---- v0.7 新增：MCP 对内消费（社区视觉工具，stdio/sse）----
+    mcp_servers: tuple[dict[str, Any], ...] = ()
 
     @classmethod
     def load(cls, *, dotenv: bool = True) -> "Settings":
@@ -118,6 +144,7 @@ class Settings:
             egress=_env("YARO_EGRESS", "off").lower(),
             egress_allow_public=_env("YARO_EGRESS_ALLOW_PUBLIC", "0") == "1",
             api_key_source=key_source,
+            mcp_servers=parse_mcp_servers(_env("YARO_MCP_SERVERS")),
         )
 
     # ------------------------------------------------------------------ #

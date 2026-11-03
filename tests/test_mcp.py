@@ -9,7 +9,8 @@ import pytest
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from yaro.contracts import ToolResult
+from yaro.config import parse_mcp_servers
+from yaro.contracts import ContractError, ToolResult
 from yaro.mcp import (
     McpServer,
     McpTool,
@@ -18,6 +19,7 @@ from yaro.mcp import (
     _pydantic_schema_to_openai,
     _tool_spec,
     mcp_tools,
+    servers_from_config,
 )
 
 
@@ -132,6 +134,61 @@ def test_build_connections_validates():
         [McpServer(name="s", transport="stdio", command="python", args=["x.py"], env={"K": "V"})]
     )
     assert conns["s"] == {"transport": "stdio", "command": "python", "args": ["x.py"], "env": {"K": "V"}}
+
+
+def test_servers_from_config_parses_dict_and_passthrough():
+    """config 的 YARO_MCP_SERVERS dict → McpServer；对象直通；非法类型报错。"""
+    parsed = servers_from_config(
+        [
+            {"name": " math ", "transport": "stdio", "command": "python", "args": ["s.py"], "env": {"K": "1"}, "url": ""},
+            {"name": "remote", "transport": "sse", "url": "http://x/y"},
+        ]
+    )
+    assert isinstance(parsed[0], McpServer)
+    assert parsed[0].name == "math"  # strip
+    assert parsed[0].command == "python"
+    assert parsed[0].args == ["s.py"]  # 值强制 str
+    assert parsed[0].env == {"K": "1"}
+    assert parsed[1].transport == "sse" and parsed[1].url == "http://x/y"
+
+    # McpServer 对象直通（代码里直接构造不重复包）
+    obj = McpServer(name="o", command="cmd")
+    assert servers_from_config([obj]) == [obj]
+
+    # 空 → 空
+    assert servers_from_config([]) == []
+    assert servers_from_config(None) == []
+
+    with pytest.raises(ValueError, match="必须是对象或 McpServer"):
+        servers_from_config(["not-an-object"])
+
+
+def test_servers_from_config_type_confusion_raises_valueerror():
+    """M-2/L-2 回归：args/env 字段类型混淆必须抛 ValueError（可被 server.py 降级），
+    而不是 AttributeError/TypeError 穿透炸掉整次运行。"""
+    with pytest.raises(ValueError, match="args 必须是列表"):
+        servers_from_config([{"name": "m", "command": "python", "args": "script.py"}])
+    with pytest.raises(ValueError, match="args 必须是列表"):
+        servers_from_config([{"name": "m", "command": "python", "args": {"a": 1}}])
+    with pytest.raises(ValueError, match="env 必须是对象"):
+        servers_from_config([{"name": "m", "command": "python", "env": "FOO=bar"}])
+    with pytest.raises(ValueError, match="env 必须是对象"):
+        servers_from_config([{"name": "m", "command": "python", "env": ["FOO=bar"]}])
+
+
+def test_parse_mcp_servers_validation():
+    """config.parse_mcp_servers 只做 JSON 层校验；字段级校验留给 servers_from_config。"""
+    assert parse_mcp_servers("") == ()
+    assert parse_mcp_servers(None) == ()
+    parsed = parse_mcp_servers('[{"name":"m","command":"python"}]')
+    assert parsed == ({"name": "m", "command": "python"},)
+
+    with pytest.raises(ContractError, match="不是合法 JSON"):
+        parse_mcp_servers("{not json")
+    with pytest.raises(ContractError, match="必须是 JSON 数组"):
+        parse_mcp_servers('{"name":"m"}')
+    with pytest.raises(ContractError, match="必须是对象"):
+        parse_mcp_servers('["just-a-string"]')
 
 
 # --------------------------------------------------------------------------- #

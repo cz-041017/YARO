@@ -3,8 +3,8 @@
 ## v0.7.0（进行中）— LangGraph 重构
 
 按用户 m03658 的 9 条需求把 YARO 从"手写事件溯源循环"迁到 LangGraph 架构（B 方案：
-全用预置抽象，但 DeepSeek `reasoning_content` 序列化与视觉/出网闸自持）。旧 `loop/agent.py` +
-`memory/session.py` 仍保留为回退路径（server.py 还在用），新 `yaro/graph/` 是并行新骨架。
+全用预置抽象，但 DeepSeek `reasoning_content` 序列化与视觉/出网闸自持）。旧 `loop/agent.py`
+已不被 server.py 引用，`memory/session.py` 保留作 GUI 事件日志，新 `yaro/graph/` 是主引擎。
 
 - **provider 层**（`yaro/provider/`）：`ChatDeepSeek(ChatOpenAI)` 子类补齐 DeepSeek
   `reasoning_content` 逐轮回传——覆盖响应解析层 `_create_chat_result` /
@@ -34,11 +34,25 @@
   server.py import（`memory/session.py` 仍作 GUI 事件日志）。
 - **MCP 对内消费**：`yaro/mcp.py`（`McpServer`/`McpTool`/`mcp_tools` 包 langchain_mcp_adapters，
   零第三方 import、pydantic schema 转 OpenAI、异常兜 ok=False，`tests/test_mcp.py` 含真实
-  FastMCP stdio 端到端）。
-- 每个模块均 spawn 子智能体对抗性审查并修完致命/高危项；全量 `pytest -q` 302 passed、
+  FastMCP stdio 端到端）；`config.py` 加 `YARO_MCP_SERVERS`（JSON 数组）→ `Settings.mcp_servers`
+  → `server.py` 在 `_run_async` 现连现发现、工具进 ToolRegistry；`/api/config` 的 `mcp_servers`
+  字段让 GUI 工具发现路径看到已配置的服务器（连接/配置失败 fail-closed 但降级为本地工具集）。
+  `servers_from_config` 对 `args`/`env` 做类型校验（必须 list/dict，否则 ValueError 降级而非
+  崩溃穿透）；MCP 工具与内置工具同名时跳过并 warning（不静默覆盖、不炸运行）。
+- **vision parts 注入（补旧 `_request_messages` 能力）**：`graph/state.py` 加 `pending_images`、
+  `graph/agent.py` 加 `_images_from_records`/`_vision_message`（tools 节点抽图写 pending_images，
+  agent 节点按 `egress.allows_images(sensitivity)` 过滤后 `render_vision_parts` 现读现编码注入下一轮，
+  剥图加文本 part 告知，注入一次即清空、字节不进状态）；`egress=None` 时 fail-closed（不注入图，
+  与压缩节点守卫一致）；`runner.run_agent` / `server._run_async` 透传 `artifacts`，模型又能看诊断图
+  而非只看文本摘要。
+- **桌面壳窗口诊断**：`desktop.py` 加 `_winforms_available()`——pywebview 6.x 的 EdgeChromium 后端
+  需要 .NET Windows Desktop Runtime（`System.Windows.Forms`），只装 .NET 基础运行时会导致
+  `webview.start()` 开不出窗口（控制台还在、无 GUI）；`diagnose()` 现报 `winforms` 字段 + 准确 hint，
+  `launch()` 检测到缺 WinForms 即抛 `DesktopUnavailable` 回退浏览器模式，而非开一个空白/报错控制台。
+- 每个模块均 spawn 子智能体对抗性审查并修完致命/高危项；全量 `pytest -q` 315 passed、
   `verify.py` 19/19（截至本条目）。
-- 尚未接线：vision parts 注入（旧 `_request_messages` 把工具产出诊断图注入下一轮，新图无，
-  模型只看文本摘要）、max_cost/max_wall 预算、打包 app 待续。
+- 尚未接线：max_cost/max_wall 预算；打包 app 已出 `dist/YARO-win64.zip`（v0.7.0，含
+  langgraph/langchain 隐藏导入 + doctor 冻结安装检查不再误报 egg-info 旧版本），换机验收属文档化后续项。
 
 ## v0.6.2 — 未知型号直接报错 + GUI 里的 API Key 入口
 

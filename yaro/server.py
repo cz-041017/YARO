@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import threading
@@ -32,6 +33,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import __version__
 from .capabilities.builtin import build_default_tools, build_tool_catalog
+from .mcp import mcp_tools, servers_from_config
 from .capabilities.registry import ToolRegistry
 from .capabilities.sandbox import DockerSandbox
 from .cli import doctor_report
@@ -50,6 +52,8 @@ from .provider.models import build_model
 from .memory.session import SessionStore
 from .secrets import status as secret_status
 from .secrets import scrub
+
+logger = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 _STATIC = {
@@ -208,6 +212,12 @@ class Harness:
             "tools": [
                 {"name": item["name"], "summary": item["description"].split("。")[0][:40]}
                 for item in build_tool_catalog(self.settings.workspace)
+            ],
+            # MCP 对内消费（社区视觉工具）：GUI 工具发现路径展示已配置的服务器；
+            # 其具体工具在每次运行 _run_async 里按 servers_from_config 现连现发现。
+            "mcp_servers": [
+                {"name": s["name"], "transport": s.get("transport", "stdio")}
+                for s in self.settings.mcp_servers
             ],
         }
 
@@ -373,7 +383,34 @@ class Harness:
             run_id=run_id,
             step=0,
         )
-        registry = ToolRegistry(tools)
+        # MCP 对内消费：把配置的社区视觉工具 MCP 服务器连进来，工具当一等工具用。
+        # 配置/连接失败 fail-closed 但降级（本地工具仍可用），不炸掉整次运行。
+        extra_tools: list[Any] = []
+        try:
+            mcp_servers = servers_from_config(settings.mcp_servers)
+        except ValueError as exc:
+            logger.warning("MCP 配置错误，跳过 MCP 工具：%s", exc)
+            mcp_servers = []
+        if mcp_servers:
+            try:
+                async with mcp_tools(mcp_servers) as extra:
+                    extra_tools = list(extra)
+            except BaseException as exc:  # noqa: BLE001 - MCP 服务器不可达时降级，不杀整次运行
+                logger.warning("MCP 工具加载失败，降级为本地工具集：%s", exc)
+                extra_tools = []
+        # MCP 工具与内置工具同名时跳过（否则 ToolRegistry 抛 ContractError 穿透运行）；
+        # 明确不静默覆盖内置工具（fail-closed：内置工具优先）。
+        if extra_tools:
+            builtin_names = {getattr(getattr(t, "spec", None), "name", "") for t in tools}
+            deduped: list[Any] = []
+            for t in extra_tools:
+                name = getattr(getattr(t, "spec", None), "name", "")
+                if name and name in builtin_names:
+                    logger.warning("MCP 工具 %r 与内置工具同名，已跳过", name)
+                else:
+                    deduped.append(t)
+            extra_tools = deduped
+        registry = ToolRegistry(tools + extra_tools)
         if state.demo:
             model: Any = DemoChatModel(delay_s=0.0)
             # demo 用假 usage（deepseek-flash 价格），固定 flash 计价，不受 YARO_MODEL 影响（修 L2）。
@@ -395,6 +432,7 @@ class Harness:
             stop_check=state.stop_event.is_set,
             model_name=cost_model,
             peak=is_peak(),
+            artifacts=self.artifacts,
         )
 
     def stop(self, session_id: str) -> dict[str, Any]:

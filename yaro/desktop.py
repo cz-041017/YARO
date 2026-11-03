@@ -146,6 +146,29 @@ def _webview2_runtime() -> bool | None:
     return False
 
 
+def _winforms_available() -> bool:
+    """Windows：pywebview 6.x 的 EdgeChromium 后端用 pythonnet 托管 WebView2，需要
+    .NET **Windows Desktop Runtime**（``System.Windows.Forms``）。只装了 .NET 基础运行时
+    而没装 Desktop Runtime 时，``import clr`` 能成但 ``clr.AddReference('System.Windows.Forms')``
+    抛 ``FileNotFoundException``，结果 ``webview.start()`` 静默开不出窗口。这里把整条链试一遍，
+    失败即判定"桌面后端不可用"，让调用方回退浏览器模式，而不是开一个只有报错的控制台。"""
+    if sys.platform != "win32":
+        return True  # macOS / Linux 走各自后端（GTK/Cocoa），不走 WinForms
+    import os
+
+    try:
+        try:
+            import clr  # noqa: PLC0415
+        except Exception:  # noqa: BLE001 - 默认 netfx 失败时切 coreclr（与 edgechromium.py 一致）
+            os.environ["PYTHONNET_RUNTIME"] = "coreclr"
+            import clr  # noqa: PLC0415
+        clr.AddReference("System.Windows.Forms")  # noqa: PLC0415
+        import System.Windows.Forms  # noqa: PLC0415, F401
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def diagnose() -> dict[str, Any]:
     """返回一组只读诊断字段，``yaro app --check`` 与 ``yaro doctor`` 都用它。"""
     from . import __version__
@@ -166,7 +189,8 @@ def diagnose() -> dict[str, Any]:
     webview_version = _pywebview_version() if webview_ready else "未安装"
     backend = "pywebview" if webview_ready else "none"
     webview2 = _webview2_runtime()
-    ok = webview_ready and (webview2 is not False)
+    winforms = _winforms_available()
+    ok = webview_ready and (webview2 is not False) and winforms
 
     if ok:
         hint = "窗口可用：yaro app"
@@ -178,6 +202,12 @@ def diagnose() -> dict[str, Any]:
             "装它：https://developer.microsoft.com/microsoft-edge/webview2/ ；"
             "或改用 `yaro gui`（浏览器标签页模式）。"
         )
+    elif not winforms:
+        hint = (
+            "缺少 .NET Windows Desktop Runtime（pywebview 6.x 的窗口后端需要 System.Windows.Forms）。"
+            "装它：https://dotnet.microsoft.com/download/dotnet （选 Windows Desktop Runtime）；"
+            "或改用 `yaro gui`（浏览器标签页模式，功能一样）。"
+        )
     else:
         hint = "窗口后端不可用；可改用 `yaro gui`（浏览器标签页模式）。"
 
@@ -186,6 +216,7 @@ def diagnose() -> dict[str, Any]:
         "backend": backend,
         "pywebview": webview_version,
         "webview2": webview2,
+        "winforms": winforms,
         "frozen": _frozen(),
         "python": sys.version.split()[0],
         "platform": sys.platform,
@@ -250,6 +281,11 @@ def launch(
     webview = _import_webview()  # 没有就抛，且不碰 settings
     version = _pywebview_version()
     _log(f"      pywebview {version}")
+    if not _winforms_available():
+        raise DesktopUnavailable(
+            "pywebview 6.x 的窗口后端需要 .NET Windows Desktop Runtime（System.Windows.Forms），"
+            "本机没有装，开不出原生窗口；已回退浏览器模式。"
+        )
 
     settings = (settings or Settings.load()).ensure()
 

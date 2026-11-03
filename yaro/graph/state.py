@@ -25,6 +25,10 @@ class GraphState(TypedDict, total=False):
     stop_reason: str
     error: str
     summary: str
+    # 待注入下一轮的视觉证据图（tools 节点写、agent 节点读后清空）。
+    # 只存 ArtifactRef 引用 + sensitivity，字节永不进状态（与旧 loop.agent 的
+    # ``_last_tool_images`` 语义一致：注入一次即清空，避免历史膨胀）。
+    pending_images: list[dict[str, Any]]
 
 
 __all__ = ["GraphState"]

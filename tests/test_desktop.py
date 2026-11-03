@@ -53,6 +53,7 @@ def test_diagnose_shape() -> None:
         "backend",
         "pywebview",
         "webview2",
+        "winforms",
         "frozen",
         "python",
         "platform",
@@ -79,3 +80,26 @@ def test_no_browser_app_mode_left() -> None:
     """
     assert not hasattr(desktop, "find_chromium")
     assert not hasattr(desktop, "_run_chromium_app")
+
+
+def test_winforms_available_returns_bool() -> None:
+    assert isinstance(desktop._winforms_available(), bool)
+
+
+def test_winforms_available_non_windows_is_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(desktop.sys, "platform", "linux")
+    assert desktop._winforms_available() is True
+
+
+def test_launch_falls_back_when_winforms_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """回归：pywebview 装了但缺 .NET Desktop Runtime（System.Windows.Forms）时，
+    launch 必须抛 DesktopUnavailable 让 CLI 回退浏览器模式，而不是在 webview.start()
+    处开一个空白/报错的控制台。"""
+
+    def fake_webview():
+        return object()
+
+    monkeypatch.setattr(desktop, "_import_webview", fake_webview)
+    monkeypatch.setattr(desktop, "_winforms_available", lambda: False)
+    with pytest.raises(desktop.DesktopUnavailable):
+        desktop.launch(None, port=0)

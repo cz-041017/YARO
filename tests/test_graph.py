@@ -10,9 +10,11 @@ import asyncio
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from yaro.capabilities.registry import ToolRegistry
-from yaro.contracts import ToolResult, ToolSpec
+from yaro.contracts import ArtifactRef, ToolResult, ToolSpec
+from yaro.egress import DERIVED, RAW, EgressPolicy
 from yaro.graph import build_agent
-from yaro.graph.agent import _is_stuck
+from yaro.graph.agent import _images_from_records, _is_stuck, _vision_message
+from yaro.memory.artifacts import ArtifactStore
 
 
 class _EchoTool:
@@ -265,4 +267,120 @@ def test_agent_does_not_compact_without_egress() -> None:
     graph = build_agent(model, registry, system="S", max_iterations=20, max_tokens=50)
     result = asyncio.run(graph.ainvoke({"messages": [HumanMessage(content=long_task)]}))
     assert not result.get("summary")
+
+
+def _make_image_store(tmp_path):
+    store = ArtifactStore(tmp_path / "artifacts")
+    ref = store.put(
+        b"\x89PNG\r\n\x1a\n" + b"0" * 16,
+        run_id="r",
+        step=0,
+        kind="render",
+        media_type="image/png",
+    )
+    return store, ref
+
+
+class _ImageTool:
+    """产出一张诊断图的工具，供 vision parts 注入测试用。"""
+
+    def __init__(self, ref: ArtifactRef, *, sensitive: bool = False):
+        self._ref = ref
+        self._sensitive = sensitive
+
+    spec = ToolSpec(
+        name="snap",
+        description="produce a diagnostic image",
+        parameters={"type": "object", "properties": {}, "required": []},
+    )
+
+    async def run(self) -> ToolResult:
+        return ToolResult(ok=True, summary="snap", artifacts=[self._ref], sensitive=self._sensitive)
+
+
+def _snap_call(call_id: str) -> AIMessage:
+    return AIMessage(content="", tool_calls=[{"name": "snap", "args": {}, "id": call_id}])
+
+
+def test_images_from_records_sensitivity_mapping() -> None:
+    """工具产出的图按 result.sensitive 映射 raw/derived，供 egress 过滤。"""
+    ref = ArtifactRef(uri="artifacts://r/0/render/x.png", sha256="a" * 64, media_type="image/png", size=1)
+    derived = [{"name": "snap", "sensitive": False, "artifacts": [ref.to_dict()]}]
+    raw = [{"name": "snap", "sensitive": True, "artifacts": [ref.to_dict()]}]
+
+    assert _images_from_records(derived)[0]["sensitivity"] == DERIVED
+    assert _images_from_records(raw)[0]["sensitivity"] == RAW
+    # 非图片产物（application/json）不进 pending_images
+    txt_ref = ArtifactRef(uri="artifacts://r/0/render/x.json", sha256="b" * 64, media_type="application/json", size=1)
+    assert _images_from_records([{"name": "snap", "sensitive": False, "artifacts": [txt_ref.to_dict()]}]) == []
+
+
+def test_vision_message_renders_image_parts(tmp_path) -> None:
+    """full 模式下派生图渲染成 image parts，字节运行时现读现编码。"""
+    store, ref = _make_image_store(tmp_path)
+    pending = [{"uri": ref.uri, "sha256": ref.sha256, "media_type": ref.media_type, "size": ref.size, "sensitivity": DERIVED}]
+    msg = _vision_message(pending, egress=EgressPolicy(mode="full"), artifacts=store, max_vision_images=2)
+    assert msg is not None
+    parts = msg.content
+    assert any(p.get("type") == "image_url" for p in parts)
+    assert any(p.get("type") == "text" and "视觉证据" in p.get("text", "") for p in parts)
+
+
+def test_vision_message_drops_raw_on_derived_egress(tmp_path) -> None:
+    """derived 档剥原图（raw）：只留文本告知，不渲染 image parts。"""
+    store, ref = _make_image_store(tmp_path)
+    pending = [{"uri": ref.uri, "sha256": ref.sha256, "media_type": ref.media_type, "size": ref.size, "sensitivity": RAW}]
+    msg = _vision_message(pending, egress=EgressPolicy(mode="derived"), artifacts=store, max_vision_images=2)
+    assert msg is not None
+    parts = msg.content
+    assert all(p.get("type") != "image_url" for p in parts)
+    assert any("剥离" in p.get("text", "") for p in parts if p.get("type") == "text")
+
+
+def test_vision_message_none_without_artifacts(tmp_path) -> None:
+    """artifacts=None 时跳过注入（fail-closed，不注入也不报错）。"""
+    _, ref = _make_image_store(tmp_path)
+    pending = [{"uri": ref.uri, "sha256": ref.sha256, "media_type": ref.media_type, "size": ref.size, "sensitivity": DERIVED}]
+    assert _vision_message(pending, egress=EgressPolicy(mode="full"), artifacts=None, max_vision_images=2) is None
+
+
+def test_vision_message_fails_closed_without_egress(tmp_path) -> None:
+    """M-1 回归：egress=None 时不注入任何图（fail-closed），与压缩节点守卫一致。"""
+    store, ref = _make_image_store(tmp_path)
+    pending = [{"uri": ref.uri, "sha256": ref.sha256, "media_type": ref.media_type, "size": ref.size, "sensitivity": RAW}]
+    assert _vision_message(pending, egress=None, artifacts=store, max_vision_images=2) is None
+
+
+def test_vision_message_none_when_max_images_nonpositive(tmp_path) -> None:
+    """max_vision_images<=0 时跳过注入。"""
+    store, ref = _make_image_store(tmp_path)
+    pending = [{"uri": ref.uri, "sha256": ref.sha256, "media_type": ref.media_type, "size": ref.size, "sensitivity": DERIVED}]
+    assert _vision_message(pending, egress=EgressPolicy(mode="full"), artifacts=store, max_vision_images=0) is None
+
+
+def test_agent_injects_vision_parts_after_tool(tmp_path) -> None:
+    """端到端：工具产出诊断图 → 下一轮 agent 节点把图注入请求（旧 loop.agent 语义回归）。"""
+    store, ref = _make_image_store(tmp_path)
+    model = _ScriptedModel([_snap_call("c1"), AIMessage(content="done")])
+    registry = ToolRegistry([_ImageTool(ref)])
+    graph = build_agent(
+        model,
+        registry,
+        system="S",
+        max_iterations=8,
+        artifacts=store,
+        egress=EgressPolicy(mode="full"),
+    )
+    result = asyncio.run(graph.ainvoke({"messages": [HumanMessage(content="look")]}))
+
+    # 第二轮模型调用（call 1）的请求里应带 vision HumanMessage（含 image part）
+    assert model.calls == 2
+    vision_msgs = [m for m in model.last_messages if isinstance(m, HumanMessage) and isinstance(m.content, list)]
+    assert vision_msgs, "第二轮请求应注入 vision parts"
+    assert any(p.get("type") == "image_url" for p in vision_msgs[-1].content)
+    # 状态里 pending_images 注入后已清空
+    assert result.get("pending_images") == []
+    # 双重注入盲区回归：vision HumanMessage 只进本轮请求，不写回 state（result["messages"] 不含它）
+    persisted = [m for m in result["messages"] if isinstance(m, HumanMessage) and isinstance(m.content, list)]
+    assert persisted == [], "vision parts 不得持久化到 state（否则下一轮双重注入）"
     assert getattr(model, "summary_calls", 0) == 0

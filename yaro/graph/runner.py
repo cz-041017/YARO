@@ -13,9 +13,8 @@ server.py 换引擎（旧 ``loop.agent.Agent`` → ``graph.agent.build_agent``�
 - **不挂 checkpointer**：一次 ``astream`` 增量跑到底（agent 图无 interrupt）；rewind/fork 仍由
   ``SessionStore.lineage/heads/rewind/fork`` 实现，每次运行前重新 reduce 历史；
 - **不记 max_cost/max_wall 预算**：``build_agent`` 只有 ``max_iterations``；
-- **不注入工具图**（已知缺口）：旧 ``loop.agent._request_messages`` 会把上轮工具产出的
-  图片（``images`` 字段）按 egress 策略注入下一轮请求的 vision parts；新图 agent 节点不做，
-  模型只能看工具结果的文本摘要，看不到诊断图。后续单独补（见 graph 节点内注释）。
+- **视觉证据注入**：``artifacts`` 传 ArtifactStore 后，工具产出的诊断图会按 egress 策略
+  注入下一轮 vision parts（与旧 loop.agent._request_messages 一致）；``artifacts=None`` 则跳过。
 
 事件映射以旧 ``loop.agent.Agent`` 的 payload 形状为准（见 ``loop/agent.py:161-282``），
 保证 GUI / 前端 / ``SessionStore.messages()`` reduce 不感知引擎已换。
@@ -34,7 +33,12 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from ..contracts import Usage
 from ..egress import DERIVED, RAW
 from ..provider.usage import usage_from_messages
-from .agent import DEFAULT_KEEP_TAIL_RATIO, DEFAULT_MAX_TOKENS, build_agent
+from .agent import (
+    DEFAULT_KEEP_TAIL_RATIO,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_MAX_VISION_IMAGES,
+    build_agent,
+)
 
 
 def _openai_tool_calls_to_lc(tool_calls: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -195,12 +199,17 @@ async def run_agent(
     stop_check: Callable[[], bool] | None = None,
     model_name: str = "deepseek-flash",
     peak: bool = False,
+    artifacts: Any = None,
+    max_vision_images: int = DEFAULT_MAX_VISION_IMAGES,
 ) -> dict[str, Any]:
     """跑一次 agent 图，把结果增量落成 SessionStore 事件，返回汇总 dict。
 
     事件顺序：先写 user（任务），之后每出现一条新消息立刻写 assistant/tool（``astream``
     增量），最后写 run_end。图中途抛异常时，已完成轮次的事件已落账，再写
     ``run_end(stop_reason="error")``（带已累计的 turn/usage），而不是向上抛。
+
+    ``artifacts`` / ``max_vision_images``：把工具产出的诊断图注入下一轮 vision parts
+    （与旧 loop.agent 一致）；``artifacts`` 为 None 时跳过注入。
 
     返回：``{run_id, stop_reason, turns, usage, cost_usd}``（usage/cost 均为 dict）。
     """
@@ -223,6 +232,8 @@ async def run_agent(
         egress=egress,
         skills=skills,
         stop_check=stop_check,
+        artifacts=artifacts,
+        max_vision_images=max_vision_images,
     )
 
     # 增量落账（修 H1）：用 astream(stream_mode="values") 按节点推进，每出现一条新消息

@@ -134,21 +134,25 @@ def doctor_report(settings: Settings) -> dict[str, object]:
 
         from . import __version__ as _code_version
 
-        try:
-            dist = _dist_version("yaro")
-        except Exception:  # noqa: BLE001
-            dist = ""
-        if dist and dist != _code_version:
-            checks.append(
-                _check(
-                    "install",
-                    False,
-                    f"安装的是 {dist}，代码是 {_code_version}："
-                    f'运行 "{sys.executable}" -m pip install -e ".[full]" 消除歧义',
-                )
-            )
+        if getattr(sys, "frozen", False):
+            # 打包版自带代码，importlib.metadata 读到的是构建机上的旧 egg-info，无意义。
+            checks.append(_check("install", True, f"代码 {_code_version}（打包版）"))
         else:
-            checks.append(_check("install", True, f"代码 {_code_version}" + (f" / 安装 {dist}" if dist else "")))
+            try:
+                dist = _dist_version("yaro")
+            except Exception:  # noqa: BLE001
+                dist = ""
+            if dist and dist != _code_version:
+                checks.append(
+                    _check(
+                        "install",
+                        False,
+                        f"安装的是 {dist}，代码是 {_code_version}："
+                        f'运行 "{sys.executable}" -m pip install -e ".[full]" 消除歧义',
+                    )
+                )
+            else:
+                checks.append(_check("install", True, f"代码 {_code_version}" + (f" / 安装 {dist}" if dist else "")))
     except Exception as exc:  # noqa: BLE001
         checks.append(_check("install", False, f"版本检查失败：{exc}"))
 

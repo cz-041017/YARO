@@ -36,7 +36,9 @@ from langchain_core.messages import (
 )
 from langgraph.graph import END, START, StateGraph
 
+from ..capabilities.evidence import render_vision_parts
 from ..contracts import ArtifactRef, Evidence
+from ..egress import DERIVED, RAW
 from .context import (
     compaction_plan,
     estimate_tokens,
@@ -51,6 +53,7 @@ DEFAULT_MAX_ITERATIONS = 32
 DEFAULT_MAX_TOKENS = 200_000
 DEFAULT_KEEP_TAIL_RATIO = 0.35
 DEFAULT_MAX_IDENTICAL_CALLS = 2
+DEFAULT_MAX_VISION_IMAGES = 2
 
 
 def _tool_call_signature(tc: dict[str, Any]) -> tuple[str, str]:
@@ -102,6 +105,69 @@ def _evidence_to_dict(evidence: Evidence) -> dict[str, Any]:
     return {"kind": evidence.kind, "caption": evidence.caption, "payload": form}
 
 
+def _images_from_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """从 tools 节点的结构化结果里抽出图像引用，映射成旧 loop.agent 的 ``images`` 形状。
+
+    ``sensitivity`` 与旧行为一致：``result.sensitive`` 为 True 的产物图标 ``raw``
+    （用户原始输入图），否则 ``derived``（harness 渲染的诊断图）。egress 据此决定
+    哪些图能出网，原图在 derived 档会被剥离。
+    """
+    images: list[dict[str, Any]] = []
+    for rec in records:
+        sensitivity = RAW if rec.get("sensitive") else DERIVED
+        for a in rec.get("artifacts") or []:
+            if (a.get("media_type") or "").startswith("image/"):
+                images.append(
+                    {
+                        "uri": a.get("uri", ""),
+                        "sha256": a.get("sha256", ""),
+                        "media_type": a.get("media_type", ""),
+                        "size": a.get("size", 0),
+                        "sensitivity": sensitivity,
+                    }
+                )
+    return images
+
+
+def _vision_message(
+    pending: list[dict[str, Any]],
+    *,
+    egress: Any,
+    artifacts: Any,
+    max_vision_images: int,
+) -> HumanMessage | None:
+    """把待注入的视觉证据渲染成一条 user 消息（含图片 parts），无图/禁用则返回 None。
+
+    与旧 ``loop.agent._request_messages`` 的注入逻辑一致：
+    1. 按 ``egress.allows_images(sensitivity)`` 过滤（原图在 derived 档被剥离）；
+    2. 剥离后用一条文本 part 明确告诉模型"图被剥了"，别让它猜图像内容；
+    3. ``render_vision_parts`` 运行时现读现编码 base64，**绝不把字节写进状态/事件**。
+    """
+    if not pending or max_vision_images <= 0 or artifacts is None:
+        return None
+    if egress is None:
+        # fail-closed：没有出网策略就不注入任何图（与压缩节点 context.summarize_prefix
+        # 的 egress 必填守卫一致）。调用方要注入视觉证据必须显式传 egress，否则原图
+        # 可能未经允许就发给模型。
+        return None
+    allowed = [img for img in pending if egress.allows_images(img.get("sensitivity", RAW))]
+    dropped = len(pending) - len(allowed)
+    parts = render_vision_parts(allowed[:max_vision_images], artifacts, max_images=max_vision_images)
+    if dropped:
+        parts = list(parts) + [
+            {
+                "type": "text",
+                "text": (
+                    f"[隐私策略] egress={getattr(egress, 'mode', '?')}：已剥离 {dropped} 张原始证据图，未出网。"
+                    "不要猜测图像内容，改用数值证据，或请人类调整出网策略。"
+                ),
+            }
+        ]
+    if not parts:
+        return None
+    return HumanMessage(content=parts)
+
+
 def _make_route(max_iterations: int, max_tokens: int | None, keep_tail_ratio: float, egress: Any) -> Callable[[GraphState], str]:
     """条件边：stop_reason → end；超预算 → finalize；上下文超阈值 → compact；否则看 tool_calls。"""
 
@@ -130,7 +196,7 @@ def _make_route(max_iterations: int, max_tokens: int | None, keep_tail_ratio: fl
     return route
 
 
-def _make_agent_node(model, registry, *, system: str | None, max_iterations: int, tool_selector, stop_check=None, max_identical_calls: int | None = DEFAULT_MAX_IDENTICAL_CALLS):
+def _make_agent_node(model, registry, *, system: str | None, max_iterations: int, tool_selector, stop_check=None, max_identical_calls: int | None = DEFAULT_MAX_IDENTICAL_CALLS, artifacts=None, max_vision_images: int = DEFAULT_MAX_VISION_IMAGES, egress: Any = None):
     """agent 节点：协作式取消（GUI 停止按钮）→ 卡死护栏 → 预算检查前置 → 选工具 → 绑定 → 调模型。
 
     ``tool_selector`` 每轮按当前消息重选 schema（工具延迟加载，对应 context.select_schemas）；
@@ -139,6 +205,8 @@ def _make_agent_node(model, registry, *, system: str | None, max_iterations: int
     （协作式取消，不打断进行中的调用，与旧 loop.agent 的 stop_check 语义一致）。
     ``max_identical_calls``：模型在**当前 user 轮**内连续这么多轮发出同一组 tool_calls 则停
     （stuck 护栏，只比较本轮、不跨 user 轮泄漏）；传 None/<=0 禁用。
+    ``artifacts`` / ``max_vision_images`` / ``egress``：把上一轮工具产出的诊断图注入本轮
+    vision parts（与旧 loop.agent._request_messages 一致）；artifacts 为 None 时跳过注入。
     """
 
     async def agent(state: GraphState) -> dict[str, Any]:
@@ -163,10 +231,21 @@ def _make_agent_node(model, registry, *, system: str | None, max_iterations: int
                 messages = [messages[0], sm, *messages[1:]]
             else:
                 messages = [sm, *messages]
+        # 视觉证据注入（旧 loop.agent._request_messages 的 vision parts）：把上一轮工具
+        # 产出的诊断图以 user 消息拼进本轮请求，模型能看图而非只看文本摘要。只注入
+        # 本地请求（不进 state["messages"]，避免历史膨胀 + 破坏 tool_call 配对）。
+        pending = state.get("pending_images") or []
+        vision = _vision_message(pending, egress=egress, artifacts=artifacts, max_vision_images=max_vision_images)
+        if vision is not None:
+            messages.append(vision)
         schemas = tool_selector(messages) if tool_selector else registry.schemas()
         bound = model.bind_tools(schemas)
         response = await bound.ainvoke(messages)
-        return {"messages": [response], "loop": int(state.get("loop", 0)) + 1}
+        return {
+            "messages": [response],
+            "loop": int(state.get("loop", 0)) + 1,
+            "pending_images": [],  # 注入一次即清空
+        }
 
     return agent
 
@@ -205,7 +284,13 @@ def _make_tools_node(registry):
             )
         ctx = dict(state.get("context") or {})
         ctx["tool_results"] = list(ctx.get("tool_results") or []) + records
-        return {"messages": out_msgs, "context": ctx}
+        # 本轮工具产出的诊断图（ArtifactRef 引用 + sensitivity），留给 agent 节点注入
+        # 下一轮 vision parts（只存引用，字节不进状态，与旧 loop.agent 一致）。
+        return {
+            "messages": out_msgs,
+            "context": ctx,
+            "pending_images": _images_from_records(records),
+        }
 
     return tools
 
@@ -272,6 +357,8 @@ def build_agent(
     skills: Any = None,
     stop_check: Callable[[], bool] | None = None,
     max_identical_calls: int | None = DEFAULT_MAX_IDENTICAL_CALLS,
+    artifacts: Any = None,
+    max_vision_images: int = DEFAULT_MAX_VISION_IMAGES,
 ):
     """组装最小 agent 图。
 
@@ -286,6 +373,8 @@ def build_agent(
     ``stop_check`` 可选：每轮模型调用前查一次，True 则停（协作式取消，GUI 停止按钮用）。
     ``max_identical_calls`` 可选：**当前 user 轮**内连续这么多轮发出同一组 tool_calls 则停
     （stuck 护栏，防烧轮）；传 ``None`` / ``<=0`` 禁用护栏。只比较本轮，不跨 user 轮泄漏。
+    ``artifacts`` / ``max_vision_images``：把工具产出的诊断图注入下一轮 vision parts
+    （与旧 loop.agent 一致）；``artifacts`` 为 None 时跳过注入。
 
     返回的图只支持 ``ainvoke`` / ``astream``（节点为 async，同步 ``invoke`` 会 TypeError）。
     """
@@ -305,6 +394,9 @@ def build_agent(
             tool_selector=tool_selector,
             stop_check=stop_check,
             max_identical_calls=max_identical_calls,
+            artifacts=artifacts,
+            max_vision_images=max_vision_images,
+            egress=egress,
         ),
     )
     graph.add_node("tools", _make_tools_node(registry))
