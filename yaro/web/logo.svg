@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="YARO">
+  <rect width="32" height="32" fill="#0a0a0b"/>
+  <rect x="0.5" y="0.5" width="31" height="31" fill="none" stroke="#3a3a40"/>
+  <!-- Y 的骨架：一条主线加两个分支，对应图谱里的 append / fork -->
+  <path d="M9 8 L16 17 L23 8" fill="none" stroke="#e7e7ea" stroke-width="1.6"/>
+  <path d="M16 17 L16 24" fill="none" stroke="#e7e7ea" stroke-width="1.6"/>
+  <circle cx="9" cy="8" r="1.5" fill="#6fbf9a"/>
+  <circle cx="23" cy="8" r="1.5" fill="#6fbf9a"/>
+  <circle cx="16" cy="24" r="1.5" fill="#d3a95f"/>
+</svg>

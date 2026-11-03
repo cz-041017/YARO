@@ -1,0 +1,46 @@
+# --- 本地环境 / 构建产物（不发布） ---
+.venv/
+.venv-*/
+venv/
+build/
+dist/
+*.egg-info/
+.eggs/
+*.whl
+*.zip
+
+# --- 运行期数据（每台机器自己生成，含用户隐私与密钥） ---
+.env
+.yaro/
+demo/
+artifacts/
+sessions/
+runs/
+data/raw/
+secrets.json
+
+# --- 缓存与日志 ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+chrome-launch-*.log
+pip-uninstall-*
+
+# --- pytest 临时目录（测试会在仓库根生成，里面有假的 secrets.json，绝不能上传） ---
+pytest-of-*/
+pytest-*/
+.pytest_tmp/
+
+# --- verify.py / 测试残留的临时副本（篡改检测临时目录、临时数据集） ---
+# tmp* 同时匹配文件与目录：本环境 tempfile.gettempdir() 会回退到仓库根（DSH 沙箱），
+# 第三方库（mcp/langgraph/langchain）无 dir 参数时会把 mkstemp/NamedTemporaryFile 落在仓库根。
+tmp*
+yaro-tamper-*/
+yaro-verify-*/
+
+# --- 开发文档（内部保留，不随仓库发布） ---
+docs/ADR-*.md
+.devnotes/

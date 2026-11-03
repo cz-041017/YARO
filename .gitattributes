@@ -1,0 +1,11 @@
+* text=auto
+
+# Windows-only scripts keep CRLF so cmd.exe / PowerShell 5.1 are happy.
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.sh  text eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.svg text
