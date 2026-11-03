@@ -692,6 +692,11 @@ function openKeyDialog() {
   $("key-egress").textContent = (cfg.model || "—") + " · egress=" +
     ((cfg.egress && cfg.egress.mode) || "off") + " · " +
     ((cfg.egress && cfg.egress.summary) || "");
+  const eg = cfg.egress || {};
+  $("egress-mode").value = eg.mode || "off";
+  $("egress-public").checked = !!eg.allow_public;
+  $("egress-summary").textContent = eg.summary || "—";
+  $("egress-warn").textContent = "";
   $("key-input").value = "";
   $("key-input2").value = "";
   $("key-warn").textContent = "";
@@ -742,6 +747,30 @@ async function clearKey() {
   }
 }
 
+async function saveEgress() {
+  const warn = $("egress-warn");
+  const mode = $("egress-mode").value;
+  const allowPublic = $("egress-public").checked;
+  if (allowPublic && mode === "full") {
+    if (!window.confirm("full + 公网 = 原始证据图会发给云端端点。确定要这样放宽吗？")) return;
+  }
+  warn.textContent = "保存中…";
+  try {
+    await api("/api/egress", { method: "POST", body: { mode: mode, allow_public: allowPublic } });
+    await loadConfig();
+    const cfg = S.config || {};
+    const eg = cfg.egress || {};
+    $("egress-summary").textContent = eg.summary || "—";
+    $("key-egress").textContent = (cfg.model || "—") + " · egress=" + (eg.mode || "off") +
+      " · " + (eg.summary || "");
+    renderFoot();
+    warn.textContent = "";
+    toast("出网策略已保存并生效");
+  } catch (error) {
+    warn.textContent = error.message || "保存失败";
+  }
+}
+
 function bind() {
   $("btn-new").addEventListener("click", newSession);
   $("btn-run").addEventListener("click", runTask);
@@ -755,6 +784,7 @@ function bind() {
   $("btn-key-close").addEventListener("click", closeKeyDialog);
   $("btn-key-save").addEventListener("click", saveKey);
   $("btn-key-clear").addEventListener("click", clearKey);
+  $("btn-egress-save").addEventListener("click", saveEgress);
   $("key-dialog").addEventListener("click", function (event) {
     if (event.target === $("key-dialog")) closeKeyDialog();
   });

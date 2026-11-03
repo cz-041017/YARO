@@ -84,6 +84,44 @@ def load_dotenv(path: Path | None = None) -> None:
         return
 
 
+def update_egress_env(mode: str, allow_public: bool, *, directory: Path | None = None) -> Path:
+    """把出网策略写进当前目录的 ``.env``（GUI 一键开关的落地）。
+
+    只改 ``YARO_EGRESS`` / ``YARO_EGRESS_ALLOW_PUBLIC`` 两行，其它键（如
+    ``DEEPSEEK_API_KEY``、``YARO_MODEL``）原样保留；文件不存在则创建。返回写入路径。
+
+    ``directory`` 仅供测试注入（默认 ``Path.cwd()``），生产路径是"用户启动目录下的 .env"。
+
+    注意：这是**持久化**（下次启动生效）；运行时立即生效走 ``Harness.set_egress``
+    里重建不可变策略那一步，两者必须一致。
+    """
+    path = (directory or Path.cwd()) / ".env"
+    lines: list[str] = []
+    if path.exists():
+        lines = path.read_text(encoding="utf-8").splitlines()
+    kept = [
+        line
+        for line in lines
+        if not (
+            line.strip().startswith("YARO_EGRESS=")
+            or line.strip().startswith("YARO_EGRESS_ALLOW_PUBLIC=")
+        )
+    ]
+    while kept and not kept[-1].strip():  # 去末尾空行，避免越写越长
+        kept.pop()
+    kept.append("")
+    kept.append("# 出网策略（GUI 写入）")
+    kept.append(f"YARO_EGRESS={mode}")
+    kept.append(f"YARO_EGRESS_ALLOW_PUBLIC={'1' if allow_public else '0'}")
+    kept.append("")
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)  # POSIX 生效；Windows 上是尽力而为
+    except OSError:  # pragma: no cover
+        pass
+    return path
+
+
 @dataclass(frozen=True)
 class Settings:
     home: Path

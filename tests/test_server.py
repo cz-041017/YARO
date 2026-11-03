@@ -391,6 +391,68 @@ def test_api_key_rejects_bad_input(server, monkeypatch):
         assert "error" in payload
 
 
+def test_egress_switch_via_gui(server, tmp_path, monkeypatch):
+    """GUI 一键改出网：mode 校验 → config 立即反映 → .env 持久化（不碰真实 cwd）。"""
+    import yaro.config as config_module
+
+    env_dir = tmp_path / "cwd"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    original = config_module.update_egress_env
+
+    def fake_update(mode, allow_public, *, directory=None):
+        return original(mode, allow_public, directory=env_dir)
+
+    monkeypatch.setattr(config_module, "update_egress_env", fake_update)
+
+    base = server["base"]
+    status, payload = call(base, "/api/egress", method="POST", body={"mode": "derived", "allow_public": True})
+    assert status == 200, payload
+    assert payload["ok"] is True
+    assert payload["egress"]["mode"] == "derived"
+    assert payload["egress"]["allow_public"] is True
+
+    # config 立即反映（下一次运行就用新策略）
+    _, cfg = call(base, "/api/config")
+    assert cfg["egress"]["mode"] == "derived"
+    assert cfg["egress"]["allow_public"] is True
+
+    # .env 持久化：只改两行、其它键保留
+    text = (env_dir / ".env").read_text(encoding="utf-8")
+    assert "YARO_EGRESS=derived" in text
+    assert "YARO_EGRESS_ALLOW_PUBLIC=1" in text
+
+
+def test_egress_rejects_bad_mode(server, tmp_path, monkeypatch):
+    import yaro.config as config_module
+
+    monkeypatch.setattr(
+        config_module, "update_egress_env",
+        lambda mode, allow_public, *, directory=None: tmp_path / ".env",
+    )
+    base = server["base"]
+    status, payload = call(base, "/api/egress", method="POST", body={"mode": "nonsense", "allow_public": False})
+    assert status == 400
+    assert "error" in payload
+
+
+def test_update_egress_env_preserves_other_keys(tmp_path):
+    from yaro.config import update_egress_env
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DEEPSEEK_API_KEY=sk-test-abc\nYARO_MODEL=deepseek-flash\nYARO_EGRESS=text\n",
+        encoding="utf-8",
+    )
+    path = update_egress_env("full", True, directory=tmp_path)
+    assert path == env_file
+    text = env_file.read_text(encoding="utf-8")
+    assert "DEEPSEEK_API_KEY=sk-test-abc" in text
+    assert "YARO_MODEL=deepseek-flash" in text
+    assert "YARO_EGRESS=full" in text
+    assert "YARO_EGRESS_ALLOW_PUBLIC=1" in text
+    assert text.count("YARO_EGRESS=") == 1  # 旧行被替换，不是追加
+
+
 def test_empty_task_is_rejected(server):
     base = server["base"]
     _, created = call(base, "/api/sessions", method="POST", body={})

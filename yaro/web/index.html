@@ -210,6 +210,25 @@ html, body { background: var(--bg); color: var(--fg); }
         <button class="btn" id="btn-key-clear">清除已保存的 Key</button>
         <button class="btn primary" id="btn-key-save">保存到本机</button>
       </div>
+      <hr class="dialog-rule" />
+      <div class="kv-line"><span class="k">出网策略</span><span class="v" id="egress-summary">—</span></div>
+      <label class="field">
+        <span class="field-label">出网档位（决定文本/图片能否发给云端模型）</span>
+        <select id="egress-mode">
+          <option value="off">off — 不出网（仅本地模型 / 演示）</option>
+          <option value="text">text — 只发文本，图片一律剥离</option>
+          <option value="derived">derived — 允许派生证据图，原图仍剥离</option>
+          <option value="full">full — 允许原始证据图</option>
+        </select>
+      </label>
+      <label class="opt">
+        <input type="checkbox" id="egress-public" />
+        <span>允许发送到公网端点（如 api.deepseek.com）</span>
+      </label>
+      <p class="dialog-warn" id="egress-warn"></p>
+      <div class="dialog-actions">
+        <button class="btn primary" id="btn-egress-save">保存出网策略</button>
+      </div>
       <p class="dialog-foot">
         云端模型还需要 <code>YARO_EGRESS=text</code> + <code>YARO_EGRESS_ALLOW_PUBLIC=1</code>；
         用内网模型（<code>DEEPSEEK_BASE_URL=http://127.0.0.1:8000/v1</code>）则不触发公网闸。

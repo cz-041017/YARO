@@ -49,7 +49,12 @@
   需要 .NET Windows Desktop Runtime（`System.Windows.Forms`），只装 .NET 基础运行时会导致
   `webview.start()` 开不出窗口（控制台还在、无 GUI）；`diagnose()` 现报 `winforms` 字段 + 准确 hint，
   `launch()` 检测到缺 WinForms 即抛 `DesktopUnavailable` 回退浏览器模式，而非开一个空白/报错控制台。
-- 每个模块均 spawn 子智能体对抗性审查并修完致命/高危项；全量 `pytest -q` 315 passed、
+- **GUI 一键改出网策略**：`config.py` 加 `update_egress_env()`（只改 `.env` 的 `YARO_EGRESS` /
+  `YARO_EGRESS_ALLOW_PUBLIC` 两行、其它键保留）、`server.py` 加 `Harness.set_egress()`（`normalize_mode`
+  校验 → 重建不可变 `egress_policy` 立即生效 → 落盘）+ `POST /api/egress` 路由（回环 + 公开模式拒绝，
+  镜像 `/api/key`）；GUI 的 Key 对话框加「出网策略」区（4 档下拉 + 公网复选框 + 保存按钮 + full+公网
+  二次确认）。默认仍 `egress=off` fail-closed，用户可一键放宽到 text/derived/full。
+- 每个模块均 spawn 子智能体对抗性审查并修完致命/高危项；全量 `pytest -q` 318 passed、
   `verify.py` 19/19（截至本条目）。
 - 尚未接线：max_cost/max_wall 预算；打包 app 已出 `dist/YARO-win64.zip`（v0.7.0，含
   langgraph/langchain 隐藏导入 + doctor 冻结安装检查不再误报 egg-info 旧版本），换机验收属文档化后续项。

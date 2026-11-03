@@ -168,6 +168,35 @@ class Harness:
         self.egress = self.settings.egress_policy()
         return {"ok": True, "key": secret_module.status(self.settings.home)}
 
+    def set_egress(self, *, mode: str, allow_public: bool) -> dict[str, Any]:
+        """GUI 一键改出网策略：校验 → 立即生效（重建不可变策略）→ 落地 ``.env``。
+
+        与 :meth:`set_api_key` 同样的边界：只允许回环地址（路由层校验）、公开模式拒绝、
+        响应不带敏感信息。运行时重建 ``self.egress``，所以下一次 ``_run_async`` 就用新策略；
+        ``.env`` 落盘保证重启后仍是用户选的值（不依赖进程内环境变量）。
+        """
+        from .config import update_egress_env
+        from .egress import normalize_mode
+
+        try:
+            normalized = normalize_mode(mode)
+        except ContractError as exc:
+            raise ApiError(str(exc), status=400) from exc
+        allow = bool(allow_public)
+        self.settings = replace(self.settings, egress=normalized, egress_allow_public=allow)
+        self.egress = self.settings.egress_policy()
+        env_path = update_egress_env(normalized, allow)
+        return {
+            "ok": True,
+            "egress": {
+                **self.egress.describe(),
+                "target": self.settings.base_url,
+                "summary": summarize_policy(self.egress, self.settings.base_url),
+                "modes": {m: label for m, label in MODE_LABELS.items()},
+            },
+            "env_path": str(env_path),
+        }
+
     # ------------------------------------------------------------------ #
     # 配置与会话
     # ------------------------------------------------------------------ #
@@ -695,6 +724,17 @@ class Handler(BaseHTTPRequestHandler):
             return harness.set_api_key(
                 action=str(body.get("action") or ""),
                 key=str(body.get("key") or ""),
+            ), 200
+        if path == "/api/egress":
+            # 出网策略与密钥同级敏感：只允许回环、公开模式拒绝（可放宽出网本身，但不能从公网改）。
+            if getattr(harness, "allow_public_gui", False):
+                raise ApiError("公开模式下禁止通过 HTTP 改出网策略（请用 `yaro init`）", status=403)
+            if str(self.client_address[0]) not in _LOOPBACK_CLIENTS:
+                raise ApiError("出网策略只允许从本机修改", status=403)
+            body = self._read_json()
+            return harness.set_egress(
+                mode=str(body.get("mode") or ""),
+                allow_public=bool(body.get("allow_public")),
             ), 200
         if path == "/api/sessions":
             return harness.create_session(), 200
